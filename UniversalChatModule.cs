@@ -1,37 +1,42 @@
 ﻿namespace Conversation;
 
 #nullable enable
-#pragma warning disable OPENAI001 // 種類は、評価の目的でのみ提供されています。将来の更新で変更または削除されることがあります。続行するには、この診断を非表示にします。
+#pragma warning disable OPENAI001
 
+using System.Text;
 using System.Text.Json;
 using OpenAI;
 using OpenAI.Chat;
 using OpenAI.Responses;
 
 public enum ChatEngineMode {
-    ResponsesChained,        // previous_response_id を保持して継続
-    ResponsesManualHistory,  // ResponseItem 履歴を毎回送る
-    ChatCompletions          // ChatClient + ChatTool で関数呼び出し
+    ResponsesChained,
+    ResponsesManualHistory,
+    ChatCompletions
 }
 
 public sealed record ChatModuleOptions(
     string Model,
     string ApiKey,
     string? SystemInstructions = null,
-    ChatEngineMode Mode = ChatEngineMode.ResponsesChained,
+    ChatEngineMode Mode = ChatEngineMode.ChatCompletions,
     bool Streaming = true,
-    int MaxToolCallRounds = 8
+    int MaxToolCallRounds = 8,
+    int SummaryTriggerTurns = 24,
+    int KeepLastTurns = 12
 );
+
+public sealed class ChatTurn {
+    public string Role { get; set; } = "user";
+    public string Text { get; set; } = string.Empty;
+}
 
 public sealed class ChatSessionState {
     public string SessionId { get; init; } = Guid.NewGuid().ToString("n");
-
-    // ResponsesChained 用
     public string? PreviousResponseId { get; set; }
-
-    // ResponsesManualHistory / ChatCompletions 用（必要最低限）
-    public List<ResponseItem> ResponseHistory { get; } = new();
-    public List<ChatMessage> ChatHistory { get; } = new();
+    public List<ChatTurn> Turns { get; set; } = new();
+    public string SummaryMemory { get; set; } = string.Empty;
+    public string? SystemInstructions { get; set; }
 }
 
 public interface IChatStateStore {
@@ -40,9 +45,6 @@ public interface IChatStateStore {
     Task DeleteAsync(string sessionId, CancellationToken ct);
 }
 
-/// <summary>
-/// とりあえず動くインメモリ。実運用では JSON/File/DB に差し替え。
-/// </summary>
 public sealed class InMemoryChatStateStore : IChatStateStore {
     private readonly Dictionary<string, ChatSessionState> _map = new();
 
@@ -64,6 +66,52 @@ public sealed class InMemoryChatStateStore : IChatStateStore {
     }
 }
 
+public sealed class JsonFileChatStateStore : IChatStateStore {
+    private readonly string _directory;
+    private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+
+    public JsonFileChatStateStore(string directory) {
+        _directory = directory;
+        Directory.CreateDirectory(_directory);
+    }
+
+    public async Task<ChatSessionState> LoadAsync(string sessionId, CancellationToken ct) {
+        var path = GetPath(sessionId);
+        if (!File.Exists(path)) return new ChatSessionState { SessionId = sessionId };
+
+        try {
+            await using var stream = File.OpenRead(path);
+            var state = await JsonSerializer.DeserializeAsync<ChatSessionState>(stream, _jsonOptions, ct);
+            if (state is null) return new ChatSessionState { SessionId = sessionId };
+            if (state.SessionId != sessionId) state = new ChatSessionState {
+                SessionId = sessionId,
+                PreviousResponseId = state.PreviousResponseId,
+                Turns = state.Turns ?? new List<ChatTurn>(),
+                SummaryMemory = state.SummaryMemory ?? string.Empty,
+                SystemInstructions = state.SystemInstructions
+            };
+            return state;
+        }
+        catch (JsonException) {
+            return new ChatSessionState { SessionId = sessionId };
+        }
+    }
+
+    public async Task SaveAsync(ChatSessionState state, CancellationToken ct) {
+        Directory.CreateDirectory(_directory);
+        await using var stream = File.Create(GetPath(state.SessionId));
+        await JsonSerializer.SerializeAsync(stream, state, _jsonOptions, ct);
+    }
+
+    public Task DeleteAsync(string sessionId, CancellationToken ct) {
+        var path = GetPath(sessionId);
+        if (File.Exists(path)) File.Delete(path);
+        return Task.CompletedTask;
+    }
+
+    private string GetPath(string sessionId) => Path.Combine(_directory, $"{sessionId}.json");
+}
+
 public sealed class UniversalChatModule {
     private readonly ChatModuleOptions _opt;
     private readonly IChatStateStore _store;
@@ -71,11 +119,9 @@ public sealed class UniversalChatModule {
     private readonly ResponsesClient _responses;
     private readonly ChatClient _chat;
 
-    // Tools (Responses)
     private readonly List<ResponseTool> _responseTools = new();
     private readonly Dictionary<string, Func<JsonElement, CancellationToken, Task<string>>> _responseToolHandlers = new();
 
-    // Tools (ChatCompletions)
     private readonly List<ChatTool> _chatTools = new();
     private readonly Dictionary<string, Func<JsonElement, CancellationToken, Task<string>>> _chatToolHandlers = new();
 
@@ -87,17 +133,12 @@ public sealed class UniversalChatModule {
         _chat = new ChatClient(opt.Model, opt.ApiKey);
     }
 
-    /// <summary>
-    /// JSON Schema で引数を定義し、C# 側のハンドラを登録する（Responses用）。
-    /// </summary>
     public UniversalChatModule AddResponseFunctionTool(
         string name,
         string description,
         string jsonSchema,
         Func<JsonElement, CancellationToken, Task<string>> handler,
         bool strictModeEnabled = false) {
-        // ResponseTool.CreateFunctionTool はSDKバージョンにより存在しない可能性があるため、
-        // その場合は ChatCompletions モードを使うか、SDK更新を推奨。
         var tool = ResponseTool.CreateFunctionTool(
             functionName: name,
             functionDescription: description,
@@ -110,9 +151,6 @@ public sealed class UniversalChatModule {
         return this;
     }
 
-    /// <summary>
-    /// JSON Schema で引数を定義し、C# 側のハンドラを登録する（ChatCompletions用）。
-    /// </summary>
     public UniversalChatModule AddChatFunctionTool(
         string name,
         string description,
@@ -134,24 +172,16 @@ public sealed class UniversalChatModule {
     public Task ResetAsync(string sessionId, CancellationToken ct = default)
         => _store.DeleteAsync(sessionId, ct);
 
-    /// <summary>
-    /// 1ターン実行（非ストリーミング）。
-    /// ストリーミング版は SendStreamingAsync を使う。
-    /// </summary>
     public async Task<string> SendAsync(string sessionId, string userText, CancellationToken ct = default) {
         return _opt.Mode switch {
             ChatEngineMode.ResponsesChained or ChatEngineMode.ResponsesManualHistory
-                => await SendWithResponsesAsync(sessionId, userText, streaming: false, ct),
+                => await SendWithResponsesAsync(sessionId, userText, ct),
             ChatEngineMode.ChatCompletions
-                => await SendWithChatCompletionsAsync(sessionId, userText, streaming: false, ct),
+                => await SendWithChatCompletionsAsync(sessionId, userText, ct),
             _ => throw new NotSupportedException()
         };
     }
 
-    /// <summary>
-    /// 1ターン実行（ストリーミング）。
-    /// Console で “贅沢” をやるならこちら推奨。
-    /// </summary>
     public async IAsyncEnumerable<string> SendStreamingAsync(string sessionId, string userText, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
         if (!_opt.Streaming) {
             yield return await SendAsync(sessionId, userText, ct);
@@ -175,45 +205,25 @@ public sealed class UniversalChatModule {
         }
     }
 
-    // ---------------------------
-    // Responses
-    // ---------------------------
-    private async Task<string> SendWithResponsesAsync(string sessionId, string userText, bool streaming, CancellationToken ct) {
+    private async Task<string> SendWithResponsesAsync(string sessionId, string userText, CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
 
-        // ツール呼び出しがあると複数ラウンドになるので、最大回数で打ち切り
         for (int round = 0; round < _opt.MaxToolCallRounds; round++) {
-            var options = BuildResponseOptions(state, userText, streamingEnabled: false);
+            var options = BuildResponseOptions(state, userText);
 
             ResponseResult resp = await _responses.CreateResponseAsync(options, ct);
-
-            // Chained の場合、次回のために previous_response_id を更新
             if (_opt.Mode == ChatEngineMode.ResponsesChained)
                 state.PreviousResponseId = resp.Id;
 
-            // 出力を見て、関数呼び出しがあれば解決して次ラウンド
             var toolOutputs = await ResolveResponseFunctionCallsAsync(resp, ct);
             if (toolOutputs.Count > 0) {
-                // tool outputs を履歴に積む（ManualHistory時）
-                if (_opt.Mode == ChatEngineMode.ResponsesManualHistory)
-                    state.ResponseHistory.AddRange(toolOutputs);
-
-                // 次のラウンドでは userText は空にして「ツール結果を踏まえて続き」を促す
                 userText = "（上記ツール結果を踏まえて続けて）";
-                await _store.SaveAsync(state, ct);
                 continue;
             }
 
-            // 通常メッセージを抽出
             string text = ExtractResponseText(resp);
-            // ManualHistoryなら履歴に積む
-            if (_opt.Mode == ChatEngineMode.ResponsesManualHistory) {
-                state.ResponseHistory.Add(ResponseItem.CreateUserMessageItem(userText));
-                // assistant 側は ResponseResult から完全に再構築するのが理想だが、
-                // ここでは簡易に “assistant text” のみ積む
-                state.ResponseHistory.Add(ResponseItem.CreateAssistantMessageItem(text));
-            }
-
+            state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+            state.Turns.Add(new ChatTurn { Role = "assistant", Text = text });
             await _store.SaveAsync(state, ct);
             return text;
         }
@@ -223,44 +233,37 @@ public sealed class UniversalChatModule {
 
     private async IAsyncEnumerable<string> SendWithResponsesStreamingAsync(string sessionId, string userText, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
-
-        // streaming でも、ツール呼び出しが絡むと “途中で止めて次ラウンド” が要る。
-        // ここでは「ツールなし or ツールが起きなかった」ケースをまず快適にする実装。
-        var options = BuildResponseOptions(state, userText, streamingEnabled: true);
+        var options = BuildResponseOptions(state, userText);
 
         await foreach (StreamingResponseUpdate update in _responses.CreateResponseStreamingAsync(options, ct)) {
             if (update is StreamingResponseOutputTextDeltaUpdate delta)
                 yield return delta.Delta;
         }
-
-        // NOTE:
-        // ツール呼び出しまで完全にストリーミングで処理する場合は、
-        // StreamingResponseUpdate の item done を集約して FunctionCallResponseItem を解決→追いリクエスト…が必要。
-        // まず “贅沢な会話UI” を作るなら、ツール呼び出しは非ストリーミング実装から固めるのが速いです。
     }
 
-    private CreateResponseOptions BuildResponseOptions(ChatSessionState state, string userText, bool streamingEnabled) {
+    private CreateResponseOptions BuildResponseOptions(ChatSessionState state, string userText) {
         var opt = new CreateResponseOptions {
-            StreamingEnabled = streamingEnabled,
+            StreamingEnabled = false,
         };
 
-        if (!string.IsNullOrWhiteSpace(_opt.SystemInstructions))
-            opt.Instructions = _opt.SystemInstructions;
+        var systemInstructions = state.SystemInstructions ?? _opt.SystemInstructions;
+        if (!string.IsNullOrWhiteSpace(systemInstructions))
+            opt.Instructions = systemInstructions;
 
         if (_responseTools.Count > 0)
             foreach (var t in _responseTools)
                 opt.Tools.Add(t);
 
-        // (A) ManualHistory：履歴を全部(または必要分) input_items に詰める
         if (_opt.Mode == ChatEngineMode.ResponsesManualHistory) {
-            foreach (var item in state.ResponseHistory)
-                opt.InputItems.Add(item);
+            foreach (var turn in state.Turns) {
+                if (turn.Role == "assistant") opt.InputItems.Add(ResponseItem.CreateAssistantMessageItem(turn.Text));
+                else opt.InputItems.Add(ResponseItem.CreateUserMessageItem(turn.Text));
+            }
 
             opt.InputItems.Add(ResponseItem.CreateUserMessageItem(userText));
             return opt;
         }
 
-        // (B) Chained：previous_response_id + 今回のユーザー入力だけ
         if (_opt.Mode == ChatEngineMode.ResponsesChained && state.PreviousResponseId is not null)
             opt.PreviousResponseId = state.PreviousResponseId;
 
@@ -278,8 +281,6 @@ public sealed class UniversalChatModule {
 
                 using var doc = JsonDocument.Parse(fc.FunctionArguments.ToString());
                 string result = await handler(doc.RootElement, ct);
-
-                // ツール結果を ResponseItem にして返す（SDK側 factory が存在する想定）
                 outputs.Add(ResponseItem.CreateFunctionCallOutputItem(fc.CallId, result));
             }
         }
@@ -288,7 +289,6 @@ public sealed class UniversalChatModule {
     }
 
     private static string ExtractResponseText(ResponseResult resp) {
-        // README例では MessageResponseItem の Content から Text を取っている :contentReference[oaicite:14]{index=14}
         var parts = new List<string>();
         foreach (var item in resp.OutputItems) {
             if (item is MessageResponseItem msg) {
@@ -299,37 +299,32 @@ public sealed class UniversalChatModule {
         return string.Join("\n", parts);
     }
 
-    // ---------------------------
-    // Chat Completions (ChatClient)
-    // ---------------------------
-    private async Task<string> SendWithChatCompletionsAsync(string sessionId, string userText, bool streaming, CancellationToken ct) {
+    private async Task<string> SendWithChatCompletionsAsync(string sessionId, string userText, CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
-
-        if (state.ChatHistory.Count == 0 && !string.IsNullOrWhiteSpace(_opt.SystemInstructions))
-            state.ChatHistory.Add(new SystemChatMessage(_opt.SystemInstructions));
-
-        state.ChatHistory.Add(new UserChatMessage(userText));
+        await MaybeSummarizeAsync(state, ct);
 
         var options = new ChatCompletionOptions();
         if (_chatTools.Count > 0)
             foreach (var t in _chatTools)
                 options.Tools.Add(t);
 
+        var messages = BuildMessagesForModel(state, userText);
+
         bool requiresAction;
+        string lastAssistantText = string.Empty;
         do {
             requiresAction = false;
-
-            ChatCompletion completion = await _chat.CompleteChatAsync(state.ChatHistory, options, ct);
+            ChatCompletion completion = await _chat.CompleteChatAsync(messages, options, ct);
 
             switch (completion.FinishReason) {
                 case ChatFinishReason.Stop:
-                    state.ChatHistory.Add(new AssistantChatMessage(completion));
-                    await _store.SaveAsync(state, ct);
-                    return completion.Content[0].Text;
+                    lastAssistantText = string.Join("\n", completion.Content.Select(c => c.Text));
+                    messages.Add(new AssistantChatMessage(completion));
+                    break;
 
                 case ChatFinishReason.ToolCalls:
                     requiresAction = true;
-                    state.ChatHistory.Add(new AssistantChatMessage(completion));
+                    messages.Add(new AssistantChatMessage(completion));
 
                     foreach (ChatToolCall toolCall in completion.ToolCalls) {
                         if (!_chatToolHandlers.TryGetValue(toolCall.FunctionName, out var handler))
@@ -337,9 +332,7 @@ public sealed class UniversalChatModule {
 
                         using var doc = JsonDocument.Parse(toolCall.FunctionArguments);
                         string toolResult = await handler(doc.RootElement, ct);
-
-                        // tool message を履歴に追加（READMEの流れ）:contentReference[oaicite:15]{index=15}
-                        state.ChatHistory.Add(new ToolChatMessage(toolCall.Id, toolResult));
+                        messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
                     }
                     break;
 
@@ -349,31 +342,91 @@ public sealed class UniversalChatModule {
         }
         while (requiresAction);
 
-        throw new InvalidOperationException("Unreachable.");
+        state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+        state.Turns.Add(new ChatTurn { Role = "assistant", Text = lastAssistantText });
+        await _store.SaveAsync(state, ct);
+
+        return lastAssistantText;
     }
 
     private async IAsyncEnumerable<string> SendWithChatCompletionsStreamingAsync(string sessionId, string userText, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
-        // まずは “ツールなしの贅沢ストリーミング” を快適にする版
         var state = await _store.LoadAsync(sessionId, ct);
-
-        if (state.ChatHistory.Count == 0 && !string.IsNullOrWhiteSpace(_opt.SystemInstructions))
-            state.ChatHistory.Add(new SystemChatMessage(_opt.SystemInstructions));
-
-        state.ChatHistory.Add(new UserChatMessage(userText));
+        await MaybeSummarizeAsync(state, ct);
 
         var options = new ChatCompletionOptions();
         if (_chatTools.Count > 0)
             foreach (var t in _chatTools)
                 options.Tools.Add(t);
 
-        var updates = _chat.CompleteChatStreamingAsync(state.ChatHistory, options, ct);
+        var messages = BuildMessagesForModel(state, userText);
+        var updates = _chat.CompleteChatStreamingAsync(messages, options, ct);
 
+        var sb = new StringBuilder();
         await foreach (var u in updates) {
-            if (u.ContentUpdate.Count > 0)
-                yield return u.ContentUpdate[0].Text;
+            if (u.ContentUpdate.Count > 0) {
+                var chunk = u.ContentUpdate[0].Text;
+                sb.Append(chunk);
+                yield return chunk;
+            }
         }
 
-        // NOTE: streaming + toolcalls を完全対応するなら、
-        // toolcalls 更新の集約→tool実行→再度 streaming… が必要。
+        state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+        state.Turns.Add(new ChatTurn { Role = "assistant", Text = sb.ToString() });
+        await _store.SaveAsync(state, ct);
+    }
+
+    private List<ChatMessage> BuildMessagesForModel(ChatSessionState state, string userText) {
+        var messages = new List<ChatMessage>();
+        var systemInstructions = state.SystemInstructions ?? _opt.SystemInstructions;
+
+        if (!string.IsNullOrWhiteSpace(systemInstructions))
+            messages.Add(new SystemChatMessage(systemInstructions));
+
+        if (!string.IsNullOrWhiteSpace(state.SummaryMemory))
+            messages.Add(new SystemChatMessage($"[MEMORY]\n{state.SummaryMemory}"));
+
+        int keepLastTurns = Math.Max(1, _opt.KeepLastTurns);
+        foreach (var turn in state.Turns.Skip(Math.Max(0, state.Turns.Count - keepLastTurns)))
+            messages.Add(ToChatMessage(turn));
+
+        messages.Add(new UserChatMessage(userText));
+        return messages;
+    }
+
+    private async Task MaybeSummarizeAsync(ChatSessionState state, CancellationToken ct) {
+        int triggerTurns = Math.Max(1, _opt.SummaryTriggerTurns);
+        int keepLastTurns = Math.Max(1, _opt.KeepLastTurns);
+
+        if (state.Turns.Count <= triggerTurns || state.Turns.Count <= keepLastTurns)
+            return;
+
+        int cutCount = state.Turns.Count - keepLastTurns;
+        var cut = state.Turns.Take(cutCount).ToList();
+        var cutText = string.Join("\n", cut.Select(t => $"{t.Role}: {t.Text}"));
+
+        var summarizeMessages = new List<ChatMessage> {
+            new SystemChatMessage("あなたは会話ログ要約係です。事実・関係・好み・未解決事項を短い箇条書きで出力し、感情描写は省略してください。"),
+            new UserChatMessage(cutText)
+        };
+
+        ChatCompletion summaryCompletion = await _chat.CompleteChatAsync(summarizeMessages, new ChatCompletionOptions(), ct);
+        string summary = string.Join("\n", summaryCompletion.Content.Select(c => c.Text)).Trim();
+
+        if (!string.IsNullOrWhiteSpace(summary)) {
+            state.SummaryMemory = string.IsNullOrWhiteSpace(state.SummaryMemory)
+                ? summary
+                : $"{state.SummaryMemory}\n{summary}";
+        }
+
+        state.Turns.RemoveRange(0, cutCount);
+        await _store.SaveAsync(state, ct);
+    }
+
+    private static ChatMessage ToChatMessage(ChatTurn turn) {
+        return turn.Role switch {
+            "assistant" => new AssistantChatMessage(turn.Text),
+            "system" => new SystemChatMessage(turn.Text),
+            _ => new UserChatMessage(turn.Text)
+        };
     }
 }
