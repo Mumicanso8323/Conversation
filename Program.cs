@@ -492,7 +492,7 @@ class Program {
                 int available = Math.Max(1, width - Console.CursorLeft);
                 int remaining = segment.Length - offset;
                 int take = Math.Min(available, remaining);
-                Console.Write(segment.AsSpan(offset, take));
+                Console.Write(segment.Substring(offset, take));
                 offset += take;
 
                 if (offset < segment.Length) {
@@ -614,7 +614,8 @@ class Program {
                 return false;
             }
 
-            if (!GetConsoleMode(handle, out uint mode)) {
+            uint mode = 0;
+            if (!GetConsoleMode(handle, out mode)) {
                 return false;
             }
 
@@ -625,15 +626,15 @@ class Program {
             return SetConsoleMode(handle, mode | enableVirtualTerminalProcessing);
         }
 
-        [System.Runtime.InteropServices.LibraryImport("kernel32.dll", SetLastError = true)]
-        private static partial IntPtr GetStdHandle(int nStdHandle);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetStdHandle(int nStdHandle);
 
-        [System.Runtime.InteropServices.LibraryImport("kernel32.dll", SetLastError = true)]
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
         [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-        private static partial bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+        private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
 
-        [System.Runtime.InteropServices.LibraryImport("kernel32.dll", SetLastError = true)]
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
         [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-        private static partial bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+        private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
     }
 }
