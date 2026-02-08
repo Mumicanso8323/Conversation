@@ -38,7 +38,7 @@ public sealed class StateNarrator {
     }
 
     private static IEnumerable<string> SalientLibido(PsycheProfileConfig profile, PsycheState state, AffinityState affinity, string userText, string recentContext) {
-        if (!PassesLibidoGate(profile, affinity, userText, recentContext)) return Enumerable.Empty<string>();
+        if (!EvaluateLibidoGate(profile, affinity, userText, recentContext)) return Enumerable.Empty<string>();
 
         return Enum.GetValues<LibidoAxis>()
             .Select(axis => CandidateForLibido(profile, state, axis))
@@ -67,7 +67,7 @@ public sealed class StateNarrator {
         return new Candidate(fragment, weight);
     }
 
-    private static bool PassesLibidoGate(PsycheProfileConfig profile, AffinityState affinity, string userText, string recentContext) {
+    public static bool EvaluateLibidoGate(PsycheProfileConfig profile, AffinityState affinity, string userText, string recentContext) {
         if (affinity.Hate >= profile.LibidoGate.MaxHate) return false;
         if (affinity.Trust < profile.LibidoGate.MinTrust) return false;
 
