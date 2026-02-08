@@ -83,6 +83,7 @@ class Program {
         """,
     };
 
+    [STAThread]
     static async Task Main() {
         string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
             ?? throw new InvalidOperationException("OPENAI_API_KEY not set");
