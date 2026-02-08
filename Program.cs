@@ -3,6 +3,7 @@
 using System.Text.Json;
 using Conversation.Affinity;
 using Conversation.Psyche;
+using Conversation.Standee;
 
 class Program {
     private const string AI = "Stella ";
@@ -109,6 +110,14 @@ class Program {
         var psycheOrchestrator = new PsycheOrchestrator();
         var stateNarrator = new StateNarrator();
         var psycheJudge = new PsycheJudge("gpt-5.1", apiKey);
+        var standeeConfig = StandeeConfig.LoadOrDefault("standee_config.json");
+        StandeeClient? standeeClient = null;
+        StandeeJudge? standeeJudge = null;
+        if (standeeConfig.Enabled) {
+            standeeClient = new StandeeClient(standeeConfig);
+            standeeJudge = new StandeeJudge("gpt-5.1", apiKey);
+            await standeeClient.InitializeAsync(CancellationToken.None);
+        }
 
         chat.AddChatFunctionTool(
             name: "roll_dice",
@@ -185,6 +194,12 @@ class Program {
             var recentContext = BuildRecentContext(currentSession.Turns, 6);
             var narrated = stateNarrator.BuildJudgeStateText(npcId, psycheProfile, affinity, psyche, input, recentContext);
             var judged = await psycheJudge.EvaluateAsync(input, profile.DisplayName, recentContext, narrated, CancellationToken.None);
+
+            if (standeeJudge is not null && standeeClient is not null) {
+                var sprite = await standeeJudge.EvaluateAsync(input, profile.DisplayName, recentContext, narrated, CancellationToken.None);
+                await standeeClient.SetSpriteAsync(sprite, CancellationToken.None);
+            }
+
             psycheOrchestrator.ApplyDelta(psyche, psycheProfile, judged.PsycheDelta);
             await psycheStore.SaveAsync(psyche, CancellationToken.None);
 
