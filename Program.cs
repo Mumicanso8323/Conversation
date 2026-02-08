@@ -83,7 +83,8 @@ class Program {
         );
 
         var affinityEngine = new AffinityEngine("gpt-5.1", apiKey);
-        var statusBar = new AffinityStatusBar();
+        var consoleUi = new ConsoleUi();
+        var statusBar = new AffinityStatusBar(consoleUi);
 
         chat.AddChatFunctionTool(
             name: "roll_dice",
@@ -110,8 +111,8 @@ class Program {
             await store.SaveAsync(currentSession, CancellationToken.None);
         }
 
-        Console.WriteLine("Enterで送信。/exit で終了。");
-        PrintHelp();
+        consoleUi.WriteLogLine("Enterで送信。/exit で終了。");
+        PrintHelp(consoleUi);
 
         while (true) {
             currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
@@ -121,14 +122,14 @@ class Program {
             var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
             statusBar.Render(npcId, profile.DisplayName, affinity);
 
-            Console.Write($"\n[{currentSessionId}/{npcId}] YOU> ");
+            consoleUi.WriteLog($"\n[{currentSessionId}/{npcId}] YOU> ");
             var input = Console.ReadLine();
             if (input is null) break;
 
             if (TryParseCommand(input, out var cmd, out var arg)) {
                 if (string.Equals(cmd, "exit", StringComparison.OrdinalIgnoreCase)) break;
 
-                var result = await HandleCommandAsync(cmd, arg, store, affinityStore, profileRepository, currentSessionId, affinityEngine);
+                var result = await HandleCommandAsync(cmd, arg, consoleUi, store, affinityStore, profileRepository, currentSessionId, affinityEngine);
                 if (result.NextSessionId is not null) {
                     currentSessionId = result.NextSessionId;
                 }
@@ -138,7 +139,7 @@ class Program {
                 }
 
                 if (!result.Handled) {
-                    Console.WriteLine($"Unknown command: /{cmd}");
+                    consoleUi.WriteLogLine($"Unknown command: /{cmd}");
                 }
 
                 currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
@@ -157,16 +158,16 @@ class Program {
             var roleplayState = affinityEngine.BuildRoleplayStatePrompt(npcId, profile, affinity);
             var forcedReply = affinityEngine.MaybeGenerateBlockedReply(affinity, profile);
 
-            Console.Write("AI > ");
+            consoleUi.WriteLog("AI > ");
             await foreach (var chunk in chat.SendStreamingAsync(
                 currentSessionId,
                 input,
                 new ChatRequestContext(roleplayState, forcedReply))) {
-                Console.Write(chunk);
+                consoleUi.WriteLogChunk(chunk);
                 statusBar.Render(npcId, profile.DisplayName, affinity);
             }
 
-            Console.WriteLine();
+            consoleUi.WriteLogLine(string.Empty);
             statusBar.Render(npcId, profile.DisplayName, affinity, true);
         }
     }
@@ -174,6 +175,7 @@ class Program {
     private static async Task<CommandResult> HandleCommandAsync(
         string cmd,
         string arg,
+        ConsoleUi consoleUi,
         IChatStateStore store,
         IAffinityStore affinityStore,
         JsonAffinityProfileRepository profileRepository,
@@ -182,19 +184,19 @@ class Program {
         var profiles = await profileRepository.LoadAsync();
         switch (cmd.ToLowerInvariant()) {
             case "help":
-                PrintHelp();
+                PrintHelp(consoleUi);
                 return new CommandResult(true, null, profiles);
 
             case "save": {
                 var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
                 await store.SaveAsync(state, CancellationToken.None);
-                Console.WriteLine($"Saved session: {state.SessionId}");
+                consoleUi.WriteLogLine($"Saved session: {state.SessionId}");
                 return new CommandResult(true, null, profiles);
             }
 
             case "load": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    Console.WriteLine("Usage: /load <sessionId>");
+                    consoleUi.WriteLogLine("Usage: /load <sessionId>");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -204,13 +206,13 @@ class Program {
                     await store.SaveAsync(loaded, CancellationToken.None);
                 }
 
-                Console.WriteLine($"Loaded session: {loaded.SessionId}");
+                consoleUi.WriteLogLine($"Loaded session: {loaded.SessionId}");
                 return new CommandResult(true, loaded.SessionId, profiles);
             }
 
             case "npc": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    Console.WriteLine("Usage: /npc <id>");
+                    consoleUi.WriteLogLine("Usage: /npc <id>");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -219,7 +221,7 @@ class Program {
                 await store.SaveAsync(state, CancellationToken.None);
                 var profile = profiles.GetRequiredProfile(state.NpcId);
                 await affinityEngine.LoadOrCreateAsync(state.NpcId, profile, affinityStore, CancellationToken.None);
-                Console.WriteLine($"NPC switched: {state.NpcId}");
+                consoleUi.WriteLogLine($"NPC switched: {state.NpcId}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -228,14 +230,14 @@ class Program {
                 var npcId = string.IsNullOrWhiteSpace(state.NpcId) ? profiles.DefaultNpcId : state.NpcId;
                 var profile = profiles.GetRequiredProfile(npcId);
                 var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
-                Console.WriteLine(JsonSerializer.Serialize(affinity, new JsonSerializerOptions { WriteIndented = true }));
+                consoleUi.WriteLogLine(JsonSerializer.Serialize(affinity, new JsonSerializerOptions { WriteIndented = true }));
                 return new CommandResult(true, null, profiles);
             }
 
             case "set": {
                 var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (parts.Length != 2 || !double.TryParse(parts[1], out var value)) {
-                    Console.WriteLine("Usage: /set <param> <value>");
+                    consoleUi.WriteLogLine("Usage: /set <param> <value>");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -244,13 +246,13 @@ class Program {
                 var profile = profiles.GetRequiredProfile(npcId);
                 var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
                 if (!AffinityEngine.TrySet(affinity, parts[0], value)) {
-                    Console.WriteLine("Unknown param. like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness");
+                    consoleUi.WriteLogLine("Unknown param. like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness");
                     return new CommandResult(true, null, profiles);
                 }
 
                 affinity.UpdatedAt = DateTimeOffset.UtcNow;
                 await affinityStore.SaveAsync(affinity, CancellationToken.None);
-                Console.WriteLine($"Set {parts[0]} = {value:F1}");
+                consoleUi.WriteLogLine($"Set {parts[0]} = {value:F1}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -258,11 +260,11 @@ class Program {
                 var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (parts.Length > 0 && string.Equals(parts[0], "reload", StringComparison.OrdinalIgnoreCase)) {
                     var reloaded = await profileRepository.LoadAsync();
-                    Console.WriteLine("Profile reloaded.");
+                    consoleUi.WriteLogLine("Profile reloaded.");
                     return new CommandResult(true, null, reloaded);
                 }
 
-                Console.WriteLine("Usage: /profile reload");
+                consoleUi.WriteLogLine("Usage: /profile reload");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -272,26 +274,26 @@ class Program {
                 state.SummaryMemory = string.Empty;
                 state.PreviousResponseId = null;
                 await store.SaveAsync(state, CancellationToken.None);
-                Console.WriteLine($"Reset session: {currentSessionId}");
+                consoleUi.WriteLogLine($"Reset session: {currentSessionId}");
                 return new CommandResult(true, null, profiles);
             }
 
             case "persona": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    Console.WriteLine("Usage: /persona <stilla>");
+                    consoleUi.WriteLogLine("Usage: /persona <stilla>");
                     return new CommandResult(true, null, profiles);
                 }
 
                 var key = arg.Trim();
                 if (!PersonaPresets.TryGetValue(key, out var persona)) {
-                    Console.WriteLine("Unknown persona. Available: stilla");
+                    consoleUi.WriteLogLine("Unknown persona. Available: stilla");
                     return new CommandResult(true, null, profiles);
                 }
 
                 var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
                 state.SystemInstructions = persona;
                 await store.SaveAsync(state, CancellationToken.None);
-                Console.WriteLine($"Persona set: {key}");
+                consoleUi.WriteLogLine($"Persona set: {key}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -301,23 +303,23 @@ class Program {
                 var path = Path.Combine("exports", $"{currentSessionId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
                 var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
                 await File.WriteAllTextAsync(path, json);
-                Console.WriteLine($"Exported: {path}");
-                Console.WriteLine(json);
+                consoleUi.WriteLogLine($"Exported: {path}");
+                consoleUi.WriteLogLine(json);
                 return new CommandResult(true, null, profiles);
             }
 
             case "import": {
                 var importPath = string.IsNullOrWhiteSpace(arg) ? "import.json" : arg.Trim();
                 if (!File.Exists(importPath)) {
-                    Console.WriteLine($"Import file not found: {importPath}");
-                    Console.WriteLine("Usage: /import <path-to-json> (default: import.json)");
+                    consoleUi.WriteLogLine($"Import file not found: {importPath}");
+                    consoleUi.WriteLogLine("Usage: /import <path-to-json> (default: import.json)");
                     return new CommandResult(true, null, profiles);
                 }
 
                 var json = await File.ReadAllTextAsync(importPath);
                 var imported = JsonSerializer.Deserialize<ChatSessionState>(json);
                 if (imported is null) {
-                    Console.WriteLine("Import failed: invalid JSON");
+                    consoleUi.WriteLogLine("Import failed: invalid JSON");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -331,7 +333,7 @@ class Program {
                 };
 
                 await store.SaveAsync(imported, CancellationToken.None);
-                Console.WriteLine($"Imported to session: {currentSessionId}");
+                consoleUi.WriteLogLine($"Imported to session: {currentSessionId}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -357,14 +359,19 @@ class Program {
         return true;
     }
 
-    private static void PrintHelp() {
-        Console.WriteLine("Commands: /save /load <id> /npc <id> /aff /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
+    private static void PrintHelp(ConsoleUi consoleUi) {
+        consoleUi.WriteLogLine("Commands: /save /load <id> /npc <id> /aff /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
     }
 
     private sealed record CommandResult(bool Handled, string? NextSessionId, AffinityProfileRoot? ProfileRoot);
 
     private sealed class AffinityStatusBar {
+        private readonly ConsoleUi _consoleUi;
         private DateTime _lastRender = DateTime.MinValue;
+
+        public AffinityStatusBar(ConsoleUi consoleUi) {
+            _consoleUi = consoleUi;
+        }
 
         public void Render(string npcId, string displayName, AffinityState state, bool force = false) {
             if (!force && (DateTime.UtcNow - _lastRender).TotalMilliseconds < 120) {
@@ -373,23 +380,169 @@ class Program {
 
             _lastRender = DateTime.UtcNow;
             var text = $"NPC:{npcId}({displayName}) Like {state.Like:F1} Dislike {state.Dislike:F1} | Liked {state.Liked:F1} Disliked {state.Disliked:F1} | Love {state.Love:F1} Hate {state.Hate:F1} | Trust {state.Trust:F1} Respect {state.Respect:F1}";
+            _consoleUi.SetStatus(text, force);
+        }
+    }
 
+    private sealed class ConsoleUi {
+        private string _statusText = string.Empty;
+        private int _lastWidth = -1;
+        private int _lastHeight = -1;
+
+        public void SetStatus(string text, bool force = false) {
             if (Console.IsOutputRedirected) {
-                Console.WriteLine(text);
+                if (force) {
+                    Console.WriteLine(text);
+                }
+
+                _statusText = text;
                 return;
             }
 
-            try {
-                int width = Math.Max(1, Console.WindowWidth - 1);
-                int line = Math.Max(0, Console.WindowHeight - 1);
-                int curLeft = Console.CursorLeft;
-                int curTop = Console.CursorTop;
+            EnsureLayout();
+            if (!force && string.Equals(_statusText, text, StringComparison.Ordinal)) {
+                return;
+            }
 
-                Console.SetCursorPosition(0, line);
-                Console.Write(new string(' ', width));
-                Console.SetCursorPosition(0, line);
-                Console.Write(text.Length > width ? text[..width] : text);
-                Console.SetCursorPosition(curLeft, curTop);
+            _statusText = text;
+            DrawStatusLine();
+        }
+
+        public void WriteLog(string text) {
+            WriteInternal(text, appendNewLine: false);
+        }
+
+        public void WriteLogLine(string text) {
+            WriteInternal(text, appendNewLine: true);
+        }
+
+        public void WriteLogChunk(string chunk) {
+            WriteInternal(chunk, appendNewLine: false);
+        }
+
+        private void WriteInternal(string text, bool appendNewLine) {
+            if (Console.IsOutputRedirected) {
+                if (appendNewLine) {
+                    Console.WriteLine(text);
+                }
+                else {
+                    Console.Write(text);
+                }
+
+                return;
+            }
+
+            EnsureLayout();
+            ClearStatusLine();
+            EnsureCursorInLogArea();
+
+            foreach (var ch in text) {
+                WriteChar(ch);
+            }
+
+            if (appendNewLine) {
+                WriteNewLine();
+            }
+
+            DrawStatusLine();
+        }
+
+        private void WriteChar(char ch) {
+            if (ch == '\r') {
+                SafeSetCursor(0, Console.CursorTop);
+                return;
+            }
+
+            if (ch == '\n') {
+                WriteNewLine();
+                return;
+            }
+
+            if (Console.CursorTop >= LogBottom && Console.CursorLeft >= Math.Max(0, Console.WindowWidth - 1)) {
+                ScrollLogArea();
+            }
+
+            Console.Write(ch);
+            EnsureCursorInLogArea();
+        }
+
+        private void WriteNewLine() {
+            if (Console.CursorTop >= LogBottom) {
+                ScrollLogArea();
+                return;
+            }
+
+            Console.WriteLine();
+            EnsureCursorInLogArea();
+        }
+
+        private void ScrollLogArea() {
+            SafeSetCursor(0, LogBottom);
+            Console.WriteLine();
+            SafeSetCursor(0, LogBottom);
+        }
+
+        private void EnsureLayout() {
+            if (Console.IsOutputRedirected) {
+                return;
+            }
+
+            int width = Math.Max(1, Console.WindowWidth);
+            int height = Math.Max(1, Console.WindowHeight);
+            if (width == _lastWidth && height == _lastHeight) {
+                return;
+            }
+
+            _lastWidth = width;
+            _lastHeight = height;
+            EnsureCursorInLogArea();
+            DrawStatusLine();
+        }
+
+        private void EnsureCursorInLogArea() {
+            int left = Math.Clamp(Console.CursorLeft, 0, Math.Max(0, Console.WindowWidth - 1));
+            int top = Math.Clamp(Console.CursorTop, 0, LogBottom);
+            SafeSetCursor(left, top);
+        }
+
+        private void DrawStatusLine() {
+            if (Console.IsOutputRedirected) {
+                return;
+            }
+
+            int curLeft = Console.CursorLeft;
+            int curTop = Console.CursorTop;
+            int width = Math.Max(1, Console.WindowWidth);
+
+            SafeSetCursor(0, StatusLine);
+            string padded = _statusText.Length > width
+                ? _statusText[..width]
+                : _statusText.PadRight(width);
+            Console.Write(padded);
+            SafeSetCursor(Math.Clamp(curLeft, 0, Math.Max(0, width - 1)), Math.Clamp(curTop, 0, LogBottom));
+        }
+
+        private void ClearStatusLine() {
+            if (Console.IsOutputRedirected) {
+                return;
+            }
+
+            int curLeft = Console.CursorLeft;
+            int curTop = Console.CursorTop;
+            int width = Math.Max(1, Console.WindowWidth);
+
+            SafeSetCursor(0, StatusLine);
+            Console.Write(new string(' ', width));
+            SafeSetCursor(Math.Clamp(curLeft, 0, Math.Max(0, width - 1)), Math.Clamp(curTop, 0, LogBottom));
+        }
+
+        private int StatusLine => Math.Max(0, Console.WindowHeight - 1);
+
+        private int LogBottom => Math.Max(0, Console.WindowHeight - 2);
+
+        private static void SafeSetCursor(int left, int top) {
+            try {
+                Console.SetCursorPosition(left, top);
             }
             catch (ArgumentOutOfRangeException) {
             }
