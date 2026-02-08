@@ -32,6 +32,10 @@ public partial class MainWindow : Window {
     private string _userDisplayName = "あなた";
     private string _currentNpcId = "stilla";
 
+    private const double MinStandeeWidth = 220;
+    private const double MaxStandeeWidth = 960;
+    private const double StandeeWindowWidthRatio = 0.45;
+
     public ObservableCollection<ChatMessage> Transcript { get; } = new();
     public StandeeService Standee => _app.StandeeService;
 
@@ -46,6 +50,7 @@ public partial class MainWindow : Window {
 
         Loaded += OnLoaded;
         Closing += OnClosing;
+        SizeChanged += OnWindowSizeChanged;
         PreviewKeyDown += OnPreviewKeyDown;
         Transcript.CollectionChanged += Transcript_OnCollectionChanged;
     }
@@ -100,6 +105,7 @@ public partial class MainWindow : Window {
             _prefs.WindowHeight = Height;
             _prefs.WindowLeft = Left;
             _prefs.WindowTop = Top;
+            _prefs.StandeePanelWidth = Math.Clamp(StandeeColumn.Width.Value, MinStandeeWidth, MaxStandeeWidth);
             _prefs.LastSessionId = _runtime.CurrentSessionId;
             _prefs.LastNpcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
             _prefs.LastTurnsToLoad = ParseTurnsCount();
@@ -112,8 +118,19 @@ public partial class MainWindow : Window {
         }
     }
 
+
+    private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e) {
+        UpdateStandeeColumnWidth();
+    }
+
+    private void UpdateStandeeColumnWidth() {
+        var preferredWidth = Math.Clamp(_prefs.StandeePanelWidth, MinStandeeWidth, MaxStandeeWidth);
+        var ratioLimitedWidth = Math.Max(MinStandeeWidth, ActualWidth * StandeeWindowWidthRatio);
+        var clampedWidth = Math.Min(preferredWidth, ratioLimitedWidth);
+        StandeeColumn.Width = new GridLength(clampedWidth);
+    }
     private void ApplyUiPreferencesToVisuals() {
-        StandeeColumn.Width = new GridLength(Math.Clamp(_prefs.StandeePanelWidth, 220, 960));
+        UpdateStandeeColumnWidth();
         StandeePanel.Background = _prefs.StandeeBackgroundDark
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF1E1E24"))
             : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFF0F0F0"));
