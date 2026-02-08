@@ -15,6 +15,24 @@ public sealed class JsonFilePsycheStore : IPsycheStore {
         Directory.CreateDirectory(_directory);
     }
 
+    public async Task DeleteAsync(string npcId, CancellationToken cancellationToken) {
+        // Validate the input
+        if (string.IsNullOrWhiteSpace(npcId)) {
+            throw new ArgumentException("NPC ID cannot be null or empty.", nameof(npcId));
+        }
+
+        // Construct the file path for the NPC
+        string filePath = GetPath(npcId);
+
+        // Check if the file exists
+        if (File.Exists(filePath)) {
+            // Delete the file asynchronously
+            await Task.Run(() => File.Delete(filePath), cancellationToken);
+        } else {
+            throw new FileNotFoundException("NPC file not found.", filePath);
+        }
+    }
+
     public async Task<PsycheState?> LoadAsync(string npcId, CancellationToken ct) {
         var path = GetPath(npcId);
         if (!File.Exists(path)) return null;
