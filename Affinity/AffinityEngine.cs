@@ -41,7 +41,7 @@ public sealed class AffinityEngine {
         };
 
         var completion = await _chatClient.CompleteChatAsync(messages, new ChatCompletionOptions { Temperature = 0.1f }, ct);
-        var raw = string.Join("", completion.Content.Select(c => c.Text)).Trim();
+        var raw = string.Join("", completion.Value.Content.Select(c => c.Text)).Trim();
 
         try {
             using var doc = JsonDocument.Parse(raw);

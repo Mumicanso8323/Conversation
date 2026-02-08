@@ -8,6 +8,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="!make_zip.bat" />
+    <None Remove=".gitattributes" />
+    <None Remove=".gitignore" />
+    <None Remove="Conversation.zip" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.5-beta1" />
     <PackageReference Include="OpenAI" Version="2.8.0" />
   </ItemGroup>
 

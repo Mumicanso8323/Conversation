@@ -257,9 +257,7 @@ public sealed class UniversalChatModule {
         var systemInstructions = state.SystemInstructions ?? _opt.SystemInstructions;
         var fullInstructions = string.IsNullOrWhiteSpace(context?.AdditionalSystemMessage)
             ? systemInstructions
-            : $"{systemInstructions}
-
-{context!.AdditionalSystemMessage}";
+            : $"{systemInstructions}\n{context!.AdditionalSystemMessage}";
 
         if (!string.IsNullOrWhiteSpace(fullInstructions))
             opt.Instructions = fullInstructions;
@@ -371,7 +369,7 @@ public sealed class UniversalChatModule {
         return lastAssistantText;
     }
 
-    private async IAsyncEnumerable<string> SendWithChatCompletionsStreamingAsync(string sessionId, string userText, ChatRequestContext? context, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
+    private async IAsyncEnumerable<string> SendWithChatCompletionsStreamingAsync(string sessionId, string userText, ChatRequestContext? context, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
         var state = await _store.LoadAsync(sessionId, ct);
         await MaybeSummarizeAsync(state, ct);
 
