@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Conversation.Affinity;
 
 public sealed class AffinityProfileRoot {
-    public string DefaultNpcId { get; set; } = "default";
+    public string DefaultNpcId { get; set; } = "stilla";
     public Dictionary<string, NpcProfile> Npcs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public NpcProfile GetRequiredProfile(string npcId) {
@@ -19,19 +19,38 @@ public sealed class AffinityProfileRoot {
     }
 
     public static AffinityProfileRoot CreateDefault() => new() {
-        DefaultNpcId = "mio",
+        DefaultNpcId = "stilla",
         Npcs = new Dictionary<string, NpcProfile>(StringComparer.OrdinalIgnoreCase) {
-            ["mio"] = new NpcProfile {
-                DisplayName = "ミオ",
-                Initial = new AffinityInitial { Liked = 10, Disliked = 5, Trust = 20, Respect = 10 },
-                Thresholds = new AffinityThresholds { LoveOn = 70, HateOn = 70, LoveOff = 55, HateOff = 55 },
-                Decay = new AffinityDecay { Like = 0.70, Dislike = 0.70 },
-                MemoryGain = new AffinityMemoryGain { LikedFromLike = 0.40, DislikedFromDislike = 0.40 },
-                StanceGain = new AffinityStanceGain { LoveFromBalance = 0.10, HateFromBalance = 0.10 },
+            ["stilla"] = new NpcProfile {
+                DisplayName = "スティラ",
+                Initial = new AffinityInitial {
+                    Liked = 8,
+                    Disliked = 3,
+                    Trust = 25,
+                    Respect = 15
+                },
+                Thresholds = new AffinityThresholds {
+                    LoveOn = 75,
+                    HateOn = 75,
+                    LoveOff = 60,
+                    HateOff = 60
+                },
+                Decay = new AffinityDecay {
+                    Like = 0.65,
+                    Dislike = 0.65
+                },
+                MemoryGain = new AffinityMemoryGain {
+                    LikedFromLike = 0.35,
+                    DislikedFromDislike = 0.35
+                },
+                StanceGain = new AffinityStanceGain {
+                    LoveFromBalance = 0.08,
+                    HateFromBalance = 0.08
+                },
                 Conversation = new AffinityConversationControl {
-                    SilentChanceAtHighHate = 0.15,
-                    ShortReplyChanceAtMidHate = 0.35,
-                    EndConversationChance = 0.20
+                    SilentChanceAtHighHate = 0.10,
+                    ShortReplyChanceAtMidHate = 0.25,
+                    EndConversationChance = 0.15
                 }
             }
         }

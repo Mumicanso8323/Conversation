@@ -1,7 +1,7 @@
 namespace Conversation.Affinity;
 
 public sealed class AffinityState {
-    public string NpcId { get; set; } = "default";
+    public string NpcId { get; set; } = "stilla";
     public double Like { get; set; }
     public double Dislike { get; set; }
     public double Liked { get; set; }
