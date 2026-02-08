@@ -158,7 +158,7 @@ class Program {
             if (TryParseCommand(input, out var cmd, out var arg)) {
                 if (string.Equals(cmd, "exit", StringComparison.OrdinalIgnoreCase)) break;
 
-                var result = await HandleCommandAsync(cmd, arg, store, affinityStore, profileRepository, currentSessionId, affinityEngine);
+                var result = await HandleCommandAsync(cmd, arg, store, affinityStore, psycheStore, profileRepository, psycheProfileRepository, currentSessionId, affinityEngine, psycheOrchestrator);
                 if (result.NextSessionId is not null) {
                     currentSessionId = result.NextSessionId;
                 }
@@ -209,10 +209,14 @@ class Program {
         string arg,
         IChatStateStore store,
         IAffinityStore affinityStore,
+        IPsycheStore psycheStore,
         JsonAffinityProfileRepository profileRepository,
+        JsonPsycheProfileRepository psycheProfileRepository,
         string currentSessionId,
-        AffinityEngine affinityEngine) {
+        AffinityEngine affinityEngine,
+        PsycheOrchestrator psycheOrchestrator) {
         var profiles = await profileRepository.LoadAsync();
+        var psycheProfiles = await psycheProfileRepository.LoadAsync();
         switch (cmd.ToLowerInvariant()) {
             case "help":
                 PrintHelp();
@@ -276,14 +280,65 @@ class Program {
                 var npcId = string.IsNullOrWhiteSpace(session.NpcId) ? profiles.DefaultNpcId : session.NpcId;
                 var profile = profiles.GetRequiredProfile(npcId);
                 var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
-                if (!AffinityEngine.TrySet(affinity, parts[0], value)) {
-                    Console.WriteLine("Unknown param. like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness");
+                if (AffinityEngine.TrySet(affinity, parts[0], value)) {
+                    affinity.UpdatedAt = DateTimeOffset.UtcNow;
+                    await affinityStore.SaveAsync(affinity, CancellationToken.None);
+                    Console.WriteLine($"Set {parts[0]} = {value:F1}");
                     return new CommandResult(true, null, profiles);
                 }
 
-                affinity.UpdatedAt = DateTimeOffset.UtcNow;
-                await affinityStore.SaveAsync(affinity, CancellationToken.None);
+                var psycheProfile = psycheProfiles.GetRequiredProfile(npcId);
+                var psyche = await psycheOrchestrator.LoadOrCreateAsync(npcId, psycheProfile, psycheStore, CancellationToken.None);
+                if (!PsycheSetter.TrySet(psyche, parts[0], value, out _)) {
+                    Console.WriteLine("Unknown param. affinity: like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness psyche: desire.<axis>.trait|deficit|gain libido.<axis>.trait|deficit|gain mood.current.valence|arousal|control mood.baseline.valence|arousal|control");
+                    return new CommandResult(true, null, profiles);
+                }
+
+                await psycheStore.SaveAsync(psyche, CancellationToken.None);
                 Console.WriteLine($"Set {parts[0]} = {value:F1}");
+                return new CommandResult(true, null, profiles);
+            }
+
+            case "psy": {
+                var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
+                var npcId = string.IsNullOrWhiteSpace(state.NpcId) ? profiles.DefaultNpcId : state.NpcId;
+                var profile = profiles.GetRequiredProfile(npcId);
+                var psycheProfile = psycheProfiles.GetRequiredProfile(npcId);
+                var psyche = await psycheOrchestrator.LoadOrCreateAsync(npcId, psycheProfile, psycheStore, CancellationToken.None);
+                var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
+
+                var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length == 0) {
+                    PrintPsycheSummary(npcId, psycheProfile, affinity, psyche, BuildRecentContext(state.Turns, 6));
+                    return new CommandResult(true, null, profiles);
+                }
+
+                if (parts.Length == 1 && string.Equals(parts[0], "json", StringComparison.OrdinalIgnoreCase)) {
+                    Console.WriteLine(JsonSerializer.Serialize(psyche, new JsonSerializerOptions { WriteIndented = true }));
+                    return new CommandResult(true, null, profiles);
+                }
+
+                if (parts.Length == 1 && string.Equals(parts[0], "reset", StringComparison.OrdinalIgnoreCase)) {
+                    await psycheStore.DeleteAsync(npcId, CancellationToken.None);
+                    psyche = await psycheOrchestrator.LoadOrCreateAsync(npcId, psycheProfile, psycheStore, CancellationToken.None);
+                    Console.WriteLine($"Psyche reset: {npcId}");
+                    PrintPsycheSummary(npcId, psycheProfile, affinity, psyche, BuildRecentContext(state.Turns, 6));
+                    return new CommandResult(true, null, profiles);
+                }
+
+                if (parts.Length == 3 && string.Equals(parts[0], "set", StringComparison.OrdinalIgnoreCase) && double.TryParse(parts[2], out var value)) {
+                    if (!PsycheSetter.TrySet(psyche, parts[1], value, out var error)) {
+                        Console.WriteLine($"/psy set failed: {error}");
+                        Console.WriteLine("Usage: /psy set <param> <value>");
+                        return new CommandResult(true, null, profiles);
+                    }
+
+                    await psycheStore.SaveAsync(psyche, CancellationToken.None);
+                    Console.WriteLine($"Set {parts[1]} = {value:F1}");
+                    return new CommandResult(true, null, profiles);
+                }
+
+                Console.WriteLine("Usage: /psy [/json|reset|set <k> <v>]");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -378,6 +433,43 @@ class Program {
         }
     }
 
+    private static void PrintPsycheSummary(string npcId, PsycheProfileConfig profile, AffinityState affinity, PsycheState psyche, string recentContext) {
+        Console.WriteLine($"Psyche: {npcId}");
+        Console.WriteLine($"Mood current   : valence={psyche.Mood.CurrentValence:F1}, arousal={psyche.Mood.CurrentArousal:F1}, control={psyche.Mood.CurrentControl:F1}");
+        Console.WriteLine($"Mood baseline  : valence={psyche.Mood.BaselineValence:F1}, arousal={psyche.Mood.BaselineArousal:F1}, control={psyche.Mood.BaselineControl:F1}");
+
+        var desireTop = Enum.GetValues<DesireAxis>()
+            .Select(axis => new { Axis = axis, Effective = PsycheOrchestrator.Effective(GetOrZero(psyche.DesireTrait, axis), GetOrZero(psyche.DesireDeficit, axis)) })
+            .OrderByDescending(x => x.Effective)
+            .Take(profile.K.KDesire)
+            .ToList();
+
+        Console.WriteLine($"Desire top{profile.K.KDesire} (effective = trait + deficit):");
+        foreach (var item in desireTop) {
+            Console.WriteLine($"- {item.Axis}: {item.Effective:F1}");
+        }
+
+        var trustOk = affinity.Trust >= profile.LibidoGate.MinTrust;
+        var hateOk = affinity.Hate < profile.LibidoGate.MaxHate;
+        var keywordHit = profile.LibidoGate.SexualKeywords.Any(k => recentContext.Contains(k, StringComparison.OrdinalIgnoreCase));
+        var gated = !StateNarrator.EvaluateLibidoGate(profile, affinity, string.Empty, recentContext);
+        Console.WriteLine($"Libido gate: {(gated ? "gated" : "open")} (trust {affinity.Trust:F1}/{profile.LibidoGate.MinTrust:F1}, hate {affinity.Hate:F1}/{profile.LibidoGate.MaxHate:F1}, keywordHit={keywordHit}, trustOk={trustOk}, hateOk={hateOk})");
+        if (!gated) {
+            var libidoTop = Enum.GetValues<LibidoAxis>()
+                .Select(axis => new { Axis = axis, Effective = PsycheOrchestrator.Effective(GetOrZero(psyche.Libido.Trait, axis), GetOrZero(psyche.Libido.Deficit, axis)) })
+                .OrderByDescending(x => x.Effective)
+                .Take(profile.K.KLibido)
+                .ToList();
+
+            Console.WriteLine($"Libido top{profile.K.KLibido} (effective = trait + deficit):");
+            foreach (var item in libidoTop) {
+                Console.WriteLine($"- {item.Axis}: {item.Effective:F1}");
+            }
+        }
+    }
+
+    private static double GetOrZero<T>(Dictionary<T, double> map, T key) where T : notnull => map.TryGetValue(key, out var value) ? value : 0;
+
 private static async Task PrintLastTurnsAsync(IChatStateStore store, string sessionId, int count) {
     var state = await store.LoadAsync(sessionId, CancellationToken.None);
     if (state.Turns.Count == 0) return;
@@ -409,7 +501,7 @@ private static async Task PrintLastTurnsAsync(IChatStateStore store, string sess
     }
 
     private static void PrintHelp() {
-        Console.WriteLine("Commands: /save /load <id> /npc <id> /aff /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
+        Console.WriteLine("Commands: /save /load <id> /npc <id> /aff /psy [json|reset|set <k> <v>] /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
     }
 
     private static string BuildRecentContext(IReadOnlyList<ChatTurn> turns, int maxTurns) {
