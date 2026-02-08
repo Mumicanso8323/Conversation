@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.IO;
 
 public partial class SettingsWindow : Window {
     private readonly ConversationRuntime _runtime;

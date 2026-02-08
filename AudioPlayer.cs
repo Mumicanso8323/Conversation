@@ -1,6 +1,7 @@
 namespace Conversation;
 
 using System.Windows.Media;
+using System.IO;
 
 public sealed class AudioPlayer : IDisposable {
     private readonly MediaPlayer _mediaPlayer = new();

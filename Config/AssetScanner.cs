@@ -1,5 +1,7 @@
 namespace Conversation.Config;
 
+using System.IO;
+
 public sealed class AssetLibrary {
     public string RootDir { get; init; } = string.Empty;
     public IReadOnlyList<string> StandeeFiles { get; init; } = Array.Empty<string>();

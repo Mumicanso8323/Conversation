@@ -1,6 +1,7 @@
 namespace Conversation.Config;
 
 using System.Text.Json;
+using System.IO;
 
 public sealed class PromptRoot {
     public Dictionary<string, PersonaPrompt> Personas { get; set; } = new(StringComparer.OrdinalIgnoreCase);
