@@ -9,11 +9,11 @@
 
     <Grid Margin="12">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition x:Name="StandeeColumn" Width="360" />
+            <ColumnDefinition />
+            <ColumnDefinition x:Name="StandeeColumn" Width="406" />
         </Grid.ColumnDefinitions>
 
-        <Grid Grid.Column="0" Margin="0,0,12,0">
+        <Grid Grid.Column="0" Grid.ColumnSpan="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -50,17 +50,17 @@
                 <ComboBox x:Name="SessionCombo" Grid.Column="1" SelectionChanged="SessionCombo_OnSelectionChanged" />
                 <Button Grid.Column="2" Margin="8,0,10,0" Width="80" Content="更新" Click="RefreshSessionButton_OnClick" />
                 <TextBlock Grid.Column="3" VerticalAlignment="Center" Margin="0,0,6,0" Text="キャラクター" />
-                <ComboBox x:Name="NpcCombo" Grid.Column="4" Width="180" SelectionChanged="NpcCombo_OnSelectionChanged" />
                 <TextBlock Grid.Column="5" VerticalAlignment="Center" Margin="12,0,6,0" Text="表示件数" />
                 <TextBox x:Name="TurnsTextBox" Grid.Column="6" Width="50" Text="20" VerticalContentAlignment="Center" />
                 <Button Grid.Column="7" Margin="8,0,0,0" Width="120" Content="ログ再読込" Click="ReloadTranscriptButton_OnClick" />
                 <Button Grid.Column="8" Margin="8,0,0,0" Width="100" Content="設定" Click="OpenSettingsButton_OnClick" />
+                <ComboBox x:Name="NpcCombo" Grid.Column="4" Width="180" SelectionChanged="NpcCombo_OnSelectionChanged" />
             </Grid>
 
             <Grid Grid.Row="2">
                 <Image x:Name="ChatBackgroundImage" Stretch="UniformToFill" Opacity="0.42" IsHitTestVisible="False"/>
                 <Border Background="#B3151720" IsHitTestVisible="False"/>
-                <ListBox x:Name="TranscriptList" ItemsSource="{Binding Transcript}" Background="Transparent" BorderThickness="0">
+                <ListBox x:Name="TranscriptList" ItemsSource="{Binding Transcript}" Background="Transparent" BorderThickness="0" Margin="0,0,411,0">
                     <ListBox.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:ChatMessage}">
                             <Grid Margin="0,0,0,8">
@@ -106,7 +106,7 @@
                 Background="#FF1E1E24"
                 CornerRadius="8"
                 Padding="8"
-                Visibility="{Binding Standee.StandeeVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                Visibility="{Binding Standee.StandeeVisible, Converter={StaticResource BoolToVisibilityConverter}}" Margin="0,30,0,0">
             <Grid>
                 <Image Stretch="Uniform" Source="{Binding Standee.CurrentBitmapImage}" />
             </Grid>
