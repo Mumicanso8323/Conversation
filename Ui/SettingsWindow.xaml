@@ -1,0 +1,286 @@
+<Window x:Class="Conversation.Ui.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="設定" Height="760" Width="860"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TabControl Grid.Row="0">
+            <TabItem Header="一般">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="180"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="ユーザー表示名" />
+                    <TextBox x:Name="UserDisplayNameTextBox" Grid.Row="0" Grid.Column="1" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="既定の表示件数" />
+                    <TextBox x:Name="DefaultTurnsTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,0" Width="80" HorizontalAlignment="Left" />
+
+                    <CheckBox x:Name="AutoScrollCheckBox" Grid.Row="2" Grid.Column="1" Margin="0,10,0,0" Content="自動スクロールを有効化" />
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="モデル">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="180"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="メインモデル" />
+                    <TextBox x:Name="MainModelTextBox" Grid.Row="0" Grid.Column="1" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="立ち絵モデル" />
+                    <TextBox x:Name="StandeeModelTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,0" />
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="表示">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="180"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <CheckBox x:Name="StandeeEnabledCheckBox" Grid.Row="0" Grid.Column="1" Content="立ち絵を表示する" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="立ち絵領域幅" />
+                    <TextBox x:Name="StandeeWidthTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,0" Width="80" HorizontalAlignment="Left" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="立ち絵背景" />
+                    <ComboBox x:Name="StandeeThemeCombo" Grid.Row="2" Grid.Column="1" Margin="0,10,0,0" Width="160" HorizontalAlignment="Left">
+                        <ComboBoxItem Content="暗色" />
+                        <ComboBoxItem Content="明色" />
+                    </ComboBox>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Affinity">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="90"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="like"/>
+                    <Slider x:Name="AffinityLikeSlider" Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="100" Margin="8,0" ValueChanged="AffinitySlider_OnValueChanged"/>
+                    <TextBox x:Name="AffinityLikeTextBox" Grid.Row="0" Grid.Column="2" Margin="8,0,0,0" TextChanged="AffinityTextBox_OnTextChanged"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="dislike"/>
+                    <Slider x:Name="AffinityDislikeSlider" Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="100" Margin="8,6" ValueChanged="AffinitySlider_OnValueChanged"/>
+                    <TextBox x:Name="AffinityDislikeTextBox" Grid.Row="1" Grid.Column="2" Margin="8,6,0,0" TextChanged="AffinityTextBox_OnTextChanged"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="trust"/>
+                    <Slider x:Name="AffinityTrustSlider" Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="100" Margin="8,6" ValueChanged="AffinitySlider_OnValueChanged"/>
+                    <TextBox x:Name="AffinityTrustTextBox" Grid.Row="2" Grid.Column="2" Margin="8,6,0,0" TextChanged="AffinityTextBox_OnTextChanged"/>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="respect"/>
+                    <Slider x:Name="AffinityRespectSlider" Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="100" Margin="8,6" ValueChanged="AffinitySlider_OnValueChanged"/>
+                    <TextBox x:Name="AffinityRespectTextBox" Grid.Row="3" Grid.Column="2" Margin="8,6,0,0" TextChanged="AffinityTextBox_OnTextChanged"/>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="sexualAwareness"/>
+                    <Slider x:Name="AffinitySexualSlider" Grid.Row="4" Grid.Column="1" Minimum="0" Maximum="100" Margin="8,6" ValueChanged="AffinitySlider_OnValueChanged"/>
+                    <TextBox x:Name="AffinitySexualTextBox" Grid.Row="4" Grid.Column="2" Margin="8,6,0,0" TextChanged="AffinityTextBox_OnTextChanged"/>
+
+                    <StackPanel Grid.Row="5" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Width="110" Content="適用" Click="ApplyAffinityButton_OnClick"/>
+                        <Button Width="110" Margin="8,0,0,0" Content="リセット" Click="ResetAffinityButton_OnClick"/>
+                        <Button Width="180" Margin="8,0,0,0" Content="現在値をJSON表示" Click="ShowAffinityJsonButton_OnClick"/>
+                    </StackPanel>
+
+                    <TextBox x:Name="AffinityJsonTextBox" Grid.Row="6" Grid.ColumnSpan="3" Margin="0,8,0,0" Height="140"
+                             IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AcceptsReturn="True"/>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Psyche">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="90"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.ColumnSpan="3" FontWeight="Bold" Text="mood.current"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="valence"/>
+                        <Slider x:Name="MoodCurrentValenceSlider" Grid.Row="1" Grid.Column="1" Minimum="-10" Maximum="10" Margin="8,0" ValueChanged="PsycheSlider_OnValueChanged"/>
+                        <TextBox x:Name="MoodCurrentValenceTextBox" Grid.Row="1" Grid.Column="2" Margin="8,0,0,0" TextChanged="PsycheTextBox_OnTextChanged"/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="arousal"/>
+                        <Slider x:Name="MoodCurrentArousalSlider" Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="10" Margin="8,6" ValueChanged="PsycheSlider_OnValueChanged"/>
+                        <TextBox x:Name="MoodCurrentArousalTextBox" Grid.Row="2" Grid.Column="2" Margin="8,6,0,0" TextChanged="PsycheTextBox_OnTextChanged"/>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="control"/>
+                        <Slider x:Name="MoodCurrentControlSlider" Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="10" Margin="8,6" ValueChanged="PsycheSlider_OnValueChanged"/>
+                        <TextBox x:Name="MoodCurrentControlTextBox" Grid.Row="3" Grid.Column="2" Margin="8,6,0,0" TextChanged="PsycheTextBox_OnTextChanged"/>
+
+                        <TextBlock Grid.Row="4" Grid.ColumnSpan="3" FontWeight="Bold" Margin="0,10,0,0" Text="mood.baseline"/>
+
+                        <TextBlock Grid.Row="5" Grid.Column="0" VerticalAlignment="Center" Text="valence"/>
+                        <Slider x:Name="MoodBaselineValenceSlider" Grid.Row="5" Grid.Column="1" Minimum="-10" Maximum="10" Margin="8,0" ValueChanged="PsycheSlider_OnValueChanged"/>
+                        <TextBox x:Name="MoodBaselineValenceTextBox" Grid.Row="5" Grid.Column="2" Margin="8,0,0,0" TextChanged="PsycheTextBox_OnTextChanged"/>
+
+                        <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="arousal"/>
+                        <Slider x:Name="MoodBaselineArousalSlider" Grid.Row="6" Grid.Column="1" Minimum="0" Maximum="10" Margin="8,6" ValueChanged="PsycheSlider_OnValueChanged"/>
+                        <TextBox x:Name="MoodBaselineArousalTextBox" Grid.Row="6" Grid.Column="2" Margin="8,6,0,0" TextChanged="PsycheTextBox_OnTextChanged"/>
+
+                        <TextBlock Grid.Row="7" Grid.Column="0" VerticalAlignment="Center" Text="control"/>
+                        <Slider x:Name="MoodBaselineControlSlider" Grid.Row="7" Grid.Column="1" Minimum="0" Maximum="10" Margin="8,6" ValueChanged="PsycheSlider_OnValueChanged"/>
+                        <TextBox x:Name="MoodBaselineControlTextBox" Grid.Row="7" Grid.Column="2" Margin="8,6,0,0" TextChanged="PsycheTextBox_OnTextChanged"/>
+
+                        <TextBlock Grid.Row="8" Grid.ColumnSpan="3" FontWeight="Bold" Margin="0,10,0,0" Text="主要軸(deficit)"/>
+
+                        <Grid Grid.Row="9" Grid.ColumnSpan="3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,4,6,0">
+                                <TextBlock Text="desire.Intimacy"/>
+                                <TextBox x:Name="DesireIntimacyDeficitTextBox" Margin="0,2,0,0"/>
+                                <TextBlock Text="desire.Approval" Margin="0,8,0,0"/>
+                                <TextBox x:Name="DesireApprovalDeficitTextBox" Margin="0,2,0,0"/>
+                                <TextBlock Text="desire.Safety" Margin="0,8,0,0"/>
+                                <TextBox x:Name="DesireSafetyDeficitTextBox" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="6,4,0,0">
+                                <TextBlock Text="libido.Libido"/>
+                                <TextBox x:Name="LibidoDeficitTextBox" Margin="0,2,0,0"/>
+                                <TextBlock Text="libido.EmotionalBond" Margin="0,8,0,0"/>
+                                <TextBox x:Name="LibidoEmotionalBondDeficitTextBox" Margin="0,2,0,0"/>
+                                <TextBlock Text="libido.PhysicalPleasure" Margin="0,8,0,0"/>
+                                <TextBox x:Name="LibidoPhysicalPleasureDeficitTextBox" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Grid.Row="10" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,12,0,0">
+                            <Button Width="110" Content="適用" Click="ApplyPsycheButton_OnClick"/>
+                            <Button Width="110" Margin="8,0,0,0" Content="リセット" Click="ResetPsycheButton_OnClick"/>
+                            <Button Width="180" Margin="8,0,0,0" Content="現在値をJSON表示" Click="ShowPsycheJsonButton_OnClick"/>
+                        </StackPanel>
+
+                        <TextBox x:Name="PsycheJsonTextBox" Grid.Row="11" Grid.ColumnSpan="3" Margin="0,8,0,0" Height="160"
+                                 IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AcceptsReturn="True"/>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+
+            <TabItem Header="JSONエディタ">
+                <Grid Margin="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="260"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" FontWeight="Bold" Text="編集対象"/>
+                    <TreeView x:Name="JsonSectionTree" Grid.Row="1" Grid.RowSpan="2" Grid.Column="0" Margin="0,8,0,0"
+                              SelectedItemChanged="JsonSectionTree_OnSelectedItemChanged">
+                        <TreeViewItem Header="prompts.json" Tag="prompts">
+                            <TreeViewItem Header="personas.stilla.system_instructions" Tag="prompts.personas.stilla.system_instructions"/>
+                            <TreeViewItem Header="modules.psyche_judge.system_prompt" Tag="prompts.modules.psyche_judge.system_prompt"/>
+                            <TreeViewItem Header="modules.standee_judge.system_prompt" Tag="prompts.modules.standee_judge.system_prompt"/>
+                            <TreeViewItem Header="raw" Tag="prompts.raw"/>
+                        </TreeViewItem>
+                        <TreeViewItem Header="psyche_profiles.json" Tag="psyche">
+                            <TreeViewItem Header="lexicon/desire・libido・mood・gate（raw）" Tag="psyche.raw"/>
+                        </TreeViewItem>
+                    </TreeView>
+
+                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Width="90" Content="整形" Click="FormatJsonButton_OnClick"/>
+                        <Button Width="90" Margin="8,0,0,0" Content="検証" Click="ValidateJsonButton_OnClick"/>
+                        <Button Width="90" Margin="8,0,0,0" Content="保存" Click="SaveJsonButton_OnClick"/>
+                        <Button Width="130" Margin="8,0,0,0" Content="デフォルトに戻す" Click="ResetJsonButton_OnClick"/>
+                    </StackPanel>
+
+                    <TextBox x:Name="JsonEditorTextBox" Grid.Row="1" Grid.Column="2" Margin="0,8,0,0"
+                             AcceptsReturn="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+                    <TextBlock x:Name="JsonEditorStatusText" Grid.Row="2" Grid.Column="2" Margin="0,8,0,0" Foreground="#FF666666" TextWrapping="Wrap"/>
+                </Grid>
+            </TabItem>
+<TabItem Header="情報">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="180"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="DataRoot" />
+                    <TextBox x:Name="DataRootTextBox" Grid.Row="0" Grid.Column="1" IsReadOnly="True" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="ログファイル" />
+                    <TextBox x:Name="LogFileTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,0" IsReadOnly="True" />
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Width="120" Content="保存" Click="SaveButton_OnClick" />
+            <Button Width="120" Margin="8,0,0,0" Content="キャンセル" Click="CancelButton_OnClick" />
+        </StackPanel>
+    </Grid>
+</Window>

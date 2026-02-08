@@ -4,15 +4,7 @@ using OpenAI.Chat;
 namespace Conversation.Psyche;
 
 public sealed class PsycheJudge {
-    private readonly ChatClient _chatClient;
-
-    public PsycheJudge(string model, string apiKey) {
-        _chatClient = new ChatClient(model, apiKey);
-    }
-
-    public async Task<PsycheJudgeResult> EvaluateAsync(string userText, string npcName, string recentContext, string narratedState, CancellationToken ct) {
-        var messages = new List<ChatMessage> {
-            new SystemChatMessage("""
+    private const string DefaultSystemPrompt = """
 You are a judge module for roleplay orchestration.
 Output JSON only. No markdown.
 Never issue persona, style, tone, first-person, or second-person instructions.
@@ -24,7 +16,24 @@ Delta ranges per turn:
 - libido_deficit: -1.0..1.0
 - mood.valence: -2..2
 - mood.arousal/control: -1..1
-"""),
+""";
+
+    private readonly ChatClient _chatClient;
+    private readonly Func<string>? _systemPromptProvider;
+
+    public PsycheJudge(string model, string apiKey, Func<string>? systemPromptProvider = null) {
+        _chatClient = new ChatClient(model, apiKey);
+        _systemPromptProvider = systemPromptProvider;
+    }
+
+    public async Task<PsycheJudgeResult> EvaluateAsync(string userText, string npcName, string recentContext, string narratedState, CancellationToken ct) {
+        var systemPrompt = _systemPromptProvider?.Invoke();
+        if (string.IsNullOrWhiteSpace(systemPrompt)) {
+            systemPrompt = DefaultSystemPrompt;
+        }
+
+        var messages = new List<ChatMessage> {
+            new SystemChatMessage(systemPrompt),
             new UserChatMessage($"NPC: {npcName}\nUtterance: {userText}\nRecent context:\n{recentContext}\n\nState:\n{narratedState}")
         };
 

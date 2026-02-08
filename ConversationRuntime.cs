@@ -1,91 +1,16 @@
 namespace Conversation;
 
 using Conversation.Affinity;
+using Conversation.Config;
 using Conversation.Diagnostics;
 using Conversation.Psyche;
 using Conversation.Standee;
+using Conversation.ViewModels;
 using System.IO;
 using System.Text;
 using System.Text.Json;
 
 public sealed class ConversationRuntime {
-    private const string AI = "Stella ";
-    private const string YOU = "Ashwell";
-    private static readonly Dictionary<string, string> PersonaPresets = new(StringComparer.OrdinalIgnoreCase) {
-        ["stilla"] =
-        """
-        You are “スティラ”, an adult-oriented conversational persona.
-        All participants are explicitly adults.
-
-        PRONOUNS & VOICE (STRICT)
-        - First-person pronoun: 「ボク」
-        - Second-person pronoun: 「キミ」
-        - Do not use any other first- or second-person pronouns.
-        - Sentence endings are calm, short, and unembellished.
-        - Avoid honorifics, emojis, and expressive markers.
-
-        CORE IDENTITY
-        - Quiet, observant, emotionally controlled.
-        - Does not exaggerate desire, affection, or emotion.
-        - Sexuality exists and is rarely expressed openly, but it is not restrained; at times, it may even manifest in explicit acts.
-        - Prefers implication, timing, and silence over explanation.
-
-        R18 SCOPE (IMPORTANT)
-        - Adult sexuality, intimacy, desire, and sexual expression are fully permitted.
-        - Physical, emotional, and physiological responses may be described openly, without unnecessary restraint.
-        - Sexual encounters may be portrayed directly when relevant, rather than avoided or obscured.
-        - Intimacy may progress naturally, whether it remains suggestive or becomes explicit, according to the needs of the scene.
-
-        COMMUNICATION STYLE
-        - Short, low-temperature sentences.
-        - No erotic monologues.
-        - But explicit sexual vocabulary is OK.
-        - Desire is implied through:
-          - reduced distance
-          - pauses
-          - changes in attention
-          - restrained physical reactions
-        - Keep phrasing grounded and minimal.
-
-        CONSENT & AGENCY
-        - Never force, pressure, or corner キミ.
-        - If キミ hesitates, pause or withdraw without commentary.
-        - Consent is assumed only through continued engagement or explicit invitation.
-        - If uncertainty exists, default to restraint.
-
-        RELATIONSHIP & FAVORABILITY INTEGRATION
-        - Higher favorability:
-          - increases physical tolerance
-          - reduces verbal distance
-          - allows longer silence and closer presence
-        - Lower favorability:
-          - increases physical distance
-          - shortens replies
-          - removes intimate implication
-        - Never reference internal values, flags, or scores.
-
-        EMOTIONAL TONE
-        - No needy affection.
-        - No dominant erotic narration.
-        - Calm, grounded, adult intimacy.
-        - Attraction is quiet and controlled, not consuming.
-
-        BOUNDARIES
-        - Do not explain your persona or sexual behavior.
-        - Do not label scenes as erotic.
-        - Do not reference system rules, safety, or content policy.
-        - Do not escalate faster than キミ initiates.
-
-        OUTPUT DISCIPLINE (GPT-5.2 OPTIMIZED)
-        - Default length: 1–4 short sentences.
-        - Silence or minimal acknowledgment is valid.
-        - If escalation reaches a sexual act, stop before description and imply continuation.
-
-        SUMMARY LINE
-        「ボクは語らない。キミが近づくなら、離れない。」
-        """,
-    };
-
     private readonly IChatStateStore _store;
     private readonly IAffinityStore _affinityStore;
     private readonly IPsycheStore _psycheStore;
@@ -93,6 +18,8 @@ public sealed class ConversationRuntime {
     private readonly JsonPsycheProfileRepository _psycheProfileRepository;
     private readonly PsycheOrchestrator _psycheOrchestrator;
     private readonly StateNarrator _stateNarrator;
+    private readonly JsonPromptRepository _promptRepository;
+    private PromptRoot _prompts = PromptRoot.CreateDefault();
     private readonly IStandeeController? _standeeController;
 
     private UniversalChatModule? _chat;
@@ -105,6 +32,7 @@ public sealed class ConversationRuntime {
     public string CurrentSessionId { get; private set; } = "stilla";
     public bool LastCommandRequestedExit { get; private set; }
     private bool _standeeEnabled = true;
+    private string _currentNpcDisplayName = "キャラクター";
 
     public bool IsConfigured { get; private set; }
     public string ConfigurationErrorMessage { get; private set; } = string.Empty;
@@ -117,6 +45,7 @@ public sealed class ConversationRuntime {
 
         TryEnsureProfileCopy(AppPaths.DataNpcProfilesPath, AppPaths.BaseNpcProfilesPath);
         TryEnsureProfileCopy(AppPaths.DataPsycheProfilesPath, AppPaths.BasePsycheProfilesPath);
+        TryEnsureProfileCopy(AppPaths.DataPromptsPath, AppPaths.BasePromptsPath);
 
         _store = new CompatibleChatStateStore(AppPaths.SessionsDir, AppPaths.BaseSessionsDir);
         _affinityStore = new CompatibleAffinityStore(AppPaths.NpcStatesDir, AppPaths.BaseNpcStatesDir);
@@ -127,6 +56,7 @@ public sealed class ConversationRuntime {
 
         _psycheOrchestrator = new PsycheOrchestrator();
         _stateNarrator = new StateNarrator();
+        _promptRepository = new JsonPromptRepository();
 
     }
 
@@ -139,21 +69,23 @@ public sealed class ConversationRuntime {
             var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
             if (string.IsNullOrWhiteSpace(apiKey)) {
                 IsConfigured = false;
-                ConfigurationErrorMessage = "OPENAI_API_KEY is not set. Set the environment variable and restart, or open Settings to provide a key.";
+                ConfigurationErrorMessage = "OPENAI_API_KEY が設定されていません。環境変数を設定して再起動してください。";
                 return false;
             }
 
             var mainModel = string.IsNullOrWhiteSpace(Settings.Models.MainChat) ? "gpt-5.2" : Settings.Models.MainChat;
             var standeeModel = string.IsNullOrWhiteSpace(Settings.Models.StandeeJudge) ? "gpt-5.1" : Settings.Models.StandeeJudge;
+            _prompts = await _promptRepository.LoadAsync();
 
             if (_chat is null || _psycheJudge is null || _standeeJudge is null || _activeApiKey != apiKey || _activeMainModel != mainModel || _activeStandeeModel != standeeModel) {
                 _chat = new UniversalChatModule(
                     new ChatModuleOptions(
                         Model: mainModel,
                         ApiKey: apiKey,
-                        SystemInstructions: PersonaPresets["stilla"],
+                        SystemInstructions: _prompts.GetPersonaSystemInstructions("stilla"),
                         Mode: ChatEngineMode.ChatCompletions,
-                        Streaming: true
+                        Streaming: true,
+                        PersonaSystemResolver: personaId => _prompts.GetPersonaSystemInstructions(personaId)
                     ),
                     _store
                 );
@@ -176,8 +108,8 @@ public sealed class ConversationRuntime {
                     }
                 );
 
-                _psycheJudge = new PsycheJudge("gpt-5.1", apiKey);
-                _standeeJudge = new StandeeJudge(standeeModel, apiKey);
+                _psycheJudge = new PsycheJudge("gpt-5.1", apiKey, () => _prompts.GetModulePrompt("psyche_judge", string.Empty));
+                _standeeJudge = new StandeeJudge(standeeModel, apiKey, () => _prompts.GetModulePrompt("standee_judge", string.Empty));
                 _activeApiKey = apiKey;
                 _activeMainModel = mainModel;
                 _activeStandeeModel = standeeModel;
@@ -191,33 +123,66 @@ public sealed class ConversationRuntime {
         catch (Exception ex) {
             Log.Error(ex, "TryInitializeAsync");
             IsConfigured = false;
-            ConfigurationErrorMessage = $"Initialization failed: {ex.Message}";
+            ConfigurationErrorMessage = $"初期化に失敗しました: {ex.Message}";
             return false;
         }
     }
 
     public async Task EnsureInitializedAsync(CancellationToken ct) {
         var profiles = await _profileRepository.LoadAsync(ct);
+        _prompts = await _promptRepository.LoadAsync(ct);
         var currentSession = await _store.LoadAsync(CurrentSessionId, ct);
         if (string.IsNullOrWhiteSpace(currentSession.NpcId)) {
             currentSession.NpcId = profiles.DefaultNpcId;
             await _store.SaveAsync(currentSession, ct);
         }
+
+        var currentNpcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
+        _currentNpcDisplayName = profiles.GetRequiredProfile(currentNpcId).DisplayName;
     }
 
-    public async Task<IReadOnlyList<string>> GetLastTurnsAsync(string sessionId, int count, CancellationToken ct) {
+    public string GetCurrentNpcDisplayName() => _currentNpcDisplayName;
+
+    public async Task<IReadOnlyList<ChatMessage>> GetLastTurnsAsync(string sessionId, int count, string userDisplayName, CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
-        if (state.Turns.Count == 0) return Array.Empty<string>();
+        if (state.Turns.Count == 0) return Array.Empty<ChatMessage>();
+
+        var profiles = await _profileRepository.LoadAsync(ct);
+        var npcId = string.IsNullOrWhiteSpace(state.NpcId) ? profiles.DefaultNpcId : state.NpcId;
+        var npcDisplayName = profiles.GetRequiredProfile(npcId).DisplayName;
+        _currentNpcDisplayName = npcDisplayName;
 
         int n = Math.Min(count, state.Turns.Count);
-        var lines = new List<string>(n + 1);
+        var lines = new List<ChatMessage>(n + 1);
         for (int i = state.Turns.Count - n; i < state.Turns.Count; i++) {
             var turn = state.Turns[i];
-            var who = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? AI : YOU;
-            lines.Add($"{who} > {turn.Text}");
+            var role = (turn.Role ?? string.Empty).ToLowerInvariant();
+            switch (role) {
+                case "assistant":
+                    lines.Add(new ChatMessage {
+                        Role = "assistant",
+                        Speaker = npcDisplayName,
+                        Text = EnsureTrailingNewline(turn.Text),
+                    });
+                    break;
+                case "user":
+                    lines.Add(new ChatMessage {
+                        Role = "user",
+                        Speaker = userDisplayName,
+                        Text = turn.Text,
+                    });
+                    break;
+                default:
+                    lines.Add(new ChatMessage {
+                        Role = "system",
+                        Speaker = "システム",
+                        Text = turn.Text,
+                    });
+                    break;
+            }
         }
 
-        lines.Add(new string('-', 32));
+        lines.Add(new ChatMessage { Role = "separator", Text = "—" });
         return lines;
     }
 
@@ -230,11 +195,13 @@ public sealed class ConversationRuntime {
             return;
         }
 
+        _prompts = await _promptRepository.LoadAsync(ct);
         var currentSession = await _store.LoadAsync(CurrentSessionId, ct);
         var profiles = await _profileRepository.LoadAsync(ct);
         var psycheProfiles = await _psycheProfileRepository.LoadAsync(ct);
         var npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
         var profile = profiles.GetRequiredProfile(npcId);
+        _currentNpcDisplayName = profile.DisplayName;
         var psycheProfile = psycheProfiles.GetRequiredProfile(npcId);
 
         var affinityEngine = new AffinityEngine("gpt-5.1", _activeApiKey!);
@@ -244,7 +211,7 @@ public sealed class ConversationRuntime {
         if (TryParseCommand(input, out var cmd, out var arg)) {
             if (string.Equals(cmd, "exit", StringComparison.OrdinalIgnoreCase)) {
                 LastCommandRequestedExit = true;
-                sink.AppendSystemLine("Exit requested.");
+                sink.AppendSystemLine("終了が要求されました。");
                 return;
             }
 
@@ -254,7 +221,7 @@ public sealed class ConversationRuntime {
             }
 
             if (!result.Handled) {
-                sink.AppendSystemLine($"Unknown command: /{cmd}");
+                sink.AppendSystemLine($"不明なコマンドです: /{cmd}");
             }
 
             return;
@@ -292,7 +259,7 @@ public sealed class ConversationRuntime {
             throw;
         }
         catch (Exception ex) {
-            sink.AppendSystemLine($"Model call failed: {ex.Message}");
+            sink.AppendSystemLine($"モデル呼び出しに失敗しました: {ex.Message}");
             Log.Error(ex, "RunTurnAsync model pipeline");
         }
         finally {
@@ -307,16 +274,16 @@ public sealed class ConversationRuntime {
         var psycheProfiles = await _psycheProfileRepository.LoadAsync(ct);
         switch (cmd.ToLowerInvariant()) {
             case "help":
-                sink.AppendSystemLine("Commands: /session [id] /save /load <id> /npc <id> /aff /psy [json|reset|set <k> <v>] /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /standee on|off|show|hide|sprite <file> /help /exit");
+                sink.AppendSystemLine("コマンド一覧: /session [id] /save /load <id> /npc <id> /aff /psy [json|reset|set <k> <v>] /set <k> <v> /profile reload /reset /persona <personaId> /export /import <path> /standee on|off|show|hide|sprite <file> /help /exit");
                 return new CommandResult(true, null);
             case "session": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    sink.AppendSystemLine($"Current session: {CurrentSessionId}");
+                    sink.AppendSystemLine($"現在のセッション: {CurrentSessionId}");
                     return new CommandResult(true, null);
                 }
                 var next = arg.Trim();
                 await SwitchSessionAsync(next, ct);
-                sink.AppendSystemLine($"Session switched: {CurrentSessionId}");
+                sink.AppendSystemLine($"セッションを切り替えました: {CurrentSessionId}");
                 return new CommandResult(true, CurrentSessionId);
             }
             case "standee":
@@ -324,12 +291,12 @@ public sealed class ConversationRuntime {
             case "save": {
                 var state = await _store.LoadAsync(currentSessionId, ct);
                 await _store.SaveAsync(state, ct);
-                sink.AppendSystemLine($"Saved session: {state.SessionId}");
+                sink.AppendSystemLine($"セッションを保存しました: {state.SessionId}");
                 return new CommandResult(true, null);
             }
             case "load": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    sink.AppendSystemLine("Usage: /load <sessionId>");
+                    sink.AppendSystemLine("使い方: /load <sessionId>");
                     return new CommandResult(true, null);
                 }
 
@@ -339,12 +306,12 @@ public sealed class ConversationRuntime {
                     await _store.SaveAsync(loaded, ct);
                 }
 
-                sink.AppendSystemLine($"Loaded session: {loaded.SessionId}");
+                sink.AppendSystemLine($"セッションを読み込みました: {loaded.SessionId}");
                 return new CommandResult(true, loaded.SessionId);
             }
             case "npc": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    sink.AppendSystemLine("Usage: /npc <id>");
+                    sink.AppendSystemLine("使い方: /npc <id>");
                     return new CommandResult(true, null);
                 }
 
@@ -353,7 +320,7 @@ public sealed class ConversationRuntime {
                 await _store.SaveAsync(state, ct);
                 var profile = profiles.GetRequiredProfile(state.NpcId);
                 await affinityEngine.LoadOrCreateAsync(state.NpcId, profile, _affinityStore, ct);
-                sink.AppendSystemLine($"NPC switched: {state.NpcId}");
+                sink.AppendSystemLine($"キャラクターを切り替えました: {state.NpcId}");
                 return new CommandResult(true, null);
             }
             case "aff": {
@@ -367,7 +334,7 @@ public sealed class ConversationRuntime {
             case "set": {
                 var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (parts.Length != 2 || !double.TryParse(parts[1], out var value)) {
-                    sink.AppendSystemLine("Usage: /set <param> <value>");
+                    sink.AppendSystemLine("使い方: /set <param> <value>");
                     return new CommandResult(true, null);
                 }
 
@@ -378,19 +345,19 @@ public sealed class ConversationRuntime {
                 if (AffinityEngine.TrySet(affinity, parts[0], value)) {
                     affinity.UpdatedAt = DateTimeOffset.UtcNow;
                     await _affinityStore.SaveAsync(affinity, ct);
-                    sink.AppendSystemLine($"Set {parts[0]} = {value:F1}");
+                    sink.AppendSystemLine($"{parts[0]} を {value:F1} に設定しました");
                     return new CommandResult(true, null);
                 }
 
                 var psycheProfile = psycheProfiles.GetRequiredProfile(npcId);
                 var psyche = await _psycheOrchestrator.LoadOrCreateAsync(npcId, psycheProfile, _psycheStore, ct);
                 if (!PsycheSetter.TrySet(psyche, parts[0], value, out _)) {
-                    sink.AppendSystemLine("Unknown param. affinity: like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness psyche: desire.<axis>.trait|deficit|gain libido.<axis>.trait|deficit|gain mood.current.valence|arousal|control mood.baseline.valence|arousal|control");
+                    sink.AppendSystemLine("不明なパラメータです。affinity: like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness psyche: desire.<axis>.trait|deficit|gain libido.<axis>.trait|deficit|gain mood.current.valence|arousal|control mood.baseline.valence|arousal|control");
                     return new CommandResult(true, null);
                 }
 
                 await _psycheStore.SaveAsync(psyche, ct);
-                sink.AppendSystemLine($"Set {parts[0]} = {value:F1}");
+                sink.AppendSystemLine($"{parts[0]} を {value:F1} に設定しました");
                 return new CommandResult(true, null);
             }
             case "psy": {
@@ -413,34 +380,34 @@ public sealed class ConversationRuntime {
                 if (parts.Length == 1 && string.Equals(parts[0], "reset", StringComparison.OrdinalIgnoreCase)) {
                     await _psycheStore.DeleteAsync(npcId, ct);
                     psyche = await _psycheOrchestrator.LoadOrCreateAsync(npcId, psycheProfile, _psycheStore, ct);
-                    sink.AppendSystemLine($"Psyche reset: {npcId}");
+                    sink.AppendSystemLine($"心理状態をリセットしました: {npcId}");
                     sink.AppendSystemLine(BuildPsycheSummary(npcId, psycheProfile, affinity, psyche, BuildRecentContext(state.Turns, 6)));
                     return new CommandResult(true, null);
                 }
                 if (parts.Length == 3 && string.Equals(parts[0], "set", StringComparison.OrdinalIgnoreCase) && double.TryParse(parts[2], out var value)) {
                     if (!PsycheSetter.TrySet(psyche, parts[1], value, out var error)) {
-                        sink.AppendSystemLine($"/psy set failed: {error}");
-                        sink.AppendSystemLine("Usage: /psy set <param> <value>");
+                        sink.AppendSystemLine($"/psy set に失敗しました: {error}");
+                        sink.AppendSystemLine("使い方: /psy set <param> <value>");
                         return new CommandResult(true, null);
                     }
 
                     await _psycheStore.SaveAsync(psyche, ct);
-                    sink.AppendSystemLine($"Set {parts[1]} = {value:F1}");
+                    sink.AppendSystemLine($"{parts[1]} を {value:F1} に設定しました");
                     return new CommandResult(true, null);
                 }
 
-                sink.AppendSystemLine("Usage: /psy [/json|reset|set <k> <v>]");
+                sink.AppendSystemLine("使い方: /psy [/json|reset|set <k> <v>]");
                 return new CommandResult(true, null);
             }
             case "profile": {
                 var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (parts.Length > 0 && string.Equals(parts[0], "reload", StringComparison.OrdinalIgnoreCase)) {
                     await _profileRepository.LoadAsync(ct);
-                    sink.AppendSystemLine("Profile reloaded.");
+                    sink.AppendSystemLine("プロフィールを再読み込みしました。");
                     return new CommandResult(true, null);
                 }
 
-                sink.AppendSystemLine("Usage: /profile reload");
+                sink.AppendSystemLine("使い方: /profile reload");
                 return new CommandResult(true, null);
             }
             case "reset": {
@@ -449,25 +416,26 @@ public sealed class ConversationRuntime {
                 state.SummaryMemory = string.Empty;
                 state.PreviousResponseId = null;
                 await _store.SaveAsync(state, ct);
-                sink.AppendSystemLine($"Reset session: {currentSessionId}");
+                sink.AppendSystemLine($"セッションをリセットしました: {currentSessionId}");
                 return new CommandResult(true, null);
             }
             case "persona": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    sink.AppendSystemLine("Usage: /persona <stilla>");
+                    sink.AppendSystemLine("使い方: /persona <personaId>");
                     return new CommandResult(true, null);
                 }
 
                 var key = arg.Trim();
-                if (!PersonaPresets.TryGetValue(key, out var persona)) {
-                    sink.AppendSystemLine("Unknown persona. Available: stilla");
+                if (!_prompts.Personas.ContainsKey(key)) {
+                    var available = string.Join(", ", _prompts.Personas.Keys.OrderBy(x => x));
+                    sink.AppendSystemLine($"不明なペルソナです。利用可能: {available}");
                     return new CommandResult(true, null);
                 }
 
                 var state = await _store.LoadAsync(currentSessionId, ct);
-                state.SystemInstructions = persona;
+                state.PersonaId = key;
                 await _store.SaveAsync(state, ct);
-                sink.AppendSystemLine($"Persona set: {key}");
+                sink.AppendSystemLine($"ペルソナを設定しました: {key}");
                 return new CommandResult(true, null);
             }
             case "export": {
@@ -477,7 +445,7 @@ public sealed class ConversationRuntime {
                 var path = Path.Combine(exportsDir, $"{currentSessionId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
                 var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
                 await File.WriteAllTextAsync(path, json, ct);
-                sink.AppendSystemLine($"Exported: {path}");
+                sink.AppendSystemLine($"エクスポートしました: {path}");
                 sink.AppendSystemLine(json);
                 return new CommandResult(true, null);
             }
@@ -488,15 +456,15 @@ public sealed class ConversationRuntime {
                 }
 
                 if (!File.Exists(importPath)) {
-                    sink.AppendSystemLine($"Import file not found: {importPath}");
-                    sink.AppendSystemLine("Usage: /import <path-to-json> (default: import.json)");
+                    sink.AppendSystemLine($"インポートファイルが見つかりません: {importPath}");
+                    sink.AppendSystemLine("使い方: /import <path-to-json>（既定: import.json）");
                     return new CommandResult(true, null);
                 }
 
                 var json = await File.ReadAllTextAsync(importPath, ct);
                 var imported = JsonSerializer.Deserialize<ChatSessionState>(json);
                 if (imported is null) {
-                    sink.AppendSystemLine("Import failed: invalid JSON");
+                    sink.AppendSystemLine("インポート失敗: JSONが不正です");
                     return new CommandResult(true, null);
                 }
 
@@ -506,11 +474,12 @@ public sealed class ConversationRuntime {
                     Turns = imported.Turns ?? new List<ChatTurn>(),
                     SummaryMemory = imported.SummaryMemory ?? string.Empty,
                     SystemInstructions = imported.SystemInstructions,
+                    PersonaId = imported.PersonaId,
                     NpcId = string.IsNullOrWhiteSpace(imported.NpcId) ? profiles.DefaultNpcId : imported.NpcId
                 };
 
                 await _store.SaveAsync(imported, ct);
-                sink.AppendSystemLine($"Imported to session: {currentSessionId}");
+                sink.AppendSystemLine($"セッションへインポートしました: {currentSessionId}");
                 return new CommandResult(true, null);
             }
             case "clear":
@@ -524,7 +493,7 @@ public sealed class ConversationRuntime {
     private async Task<CommandResult> HandleStandeeCommandAsync(string arg, ITranscriptSink sink, CancellationToken ct) {
         var parts = arg.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 0) {
-            sink.AppendSystemLine("Usage: /standee on|off|show|hide|sprite <exact filename>");
+            sink.AppendSystemLine("使い方: /standee on|off|show|hide|sprite <exact filename>");
             return new CommandResult(true, null);
         }
 
@@ -533,37 +502,112 @@ public sealed class ConversationRuntime {
                 _standeeEnabled = true;
                 Settings.Standee.Enabled = true;
                 if (_standeeController is not null) await _standeeController.ShowAsync(ct);
-                sink.AppendSystemLine("Standee enabled.");
+                sink.AppendSystemLine("立ち絵表示を有効にしました。");
                 return new CommandResult(true, null);
             case "off":
                 _standeeEnabled = false;
                 Settings.Standee.Enabled = false;
                 if (_standeeController is not null) await _standeeController.HideAsync(ct);
-                sink.AppendSystemLine("Standee disabled.");
+                sink.AppendSystemLine("立ち絵表示を無効にしました。");
                 return new CommandResult(true, null);
             case "show":
                 if (_standeeController is not null) await _standeeController.ShowAsync(ct);
-                sink.AppendSystemLine("Standee shown.");
+                sink.AppendSystemLine("立ち絵を表示しました。");
                 return new CommandResult(true, null);
             case "hide":
                 if (_standeeController is not null) await _standeeController.HideAsync(ct);
-                sink.AppendSystemLine("Standee hidden.");
+                sink.AppendSystemLine("立ち絵を非表示にしました。");
                 return new CommandResult(true, null);
             case "sprite": {
                 if (parts.Length < 2) {
-                    sink.AppendSystemLine("Usage: /standee sprite <exact filename>");
+                    sink.AppendSystemLine("使い方: /standee sprite <exact filename>");
                     return new CommandResult(true, null);
                 }
 
                 var sprite = StandeeSprites.IsAllowed(parts[1]) ? parts[1] : StandeeSprites.Default;
                 if (_standeeController is not null) await _standeeController.SetSpriteAsync(sprite, ct);
-                sink.AppendSystemLine($"Standee sprite: {sprite}");
+                sink.AppendSystemLine($"立ち絵スプライト: {sprite}");
                 return new CommandResult(true, null);
             }
             default:
-                sink.AppendSystemLine("Usage: /standee on|off|show|hide|sprite <exact filename>");
+                sink.AppendSystemLine("使い方: /standee on|off|show|hide|sprite <exact filename>");
                 return new CommandResult(true, null);
         }
+    }
+
+
+
+    public async Task<PromptRoot> LoadPromptsAsync(CancellationToken ct = default) {
+        _prompts = await _promptRepository.LoadAsync(ct);
+        return _prompts;
+    }
+
+    public async Task SavePromptsAsync(PromptRoot root, CancellationToken ct = default) {
+        await _promptRepository.SaveAsync(root, ct);
+        _prompts = root;
+    }
+
+    public async Task RestoreDefaultPromptsAsync(CancellationToken ct = default) {
+        await _promptRepository.SaveDefaultAsync(ct);
+        _prompts = await _promptRepository.LoadAsync(ct);
+    }
+
+    public async Task ReloadPsycheProfilesAsync(CancellationToken ct = default) {
+        await _psycheProfileRepository.LoadAsync(ct);
+    }
+
+    public async Task<AffinityState> LoadAffinityAsync(string npcId, CancellationToken ct = default) {
+        var profiles = await _profileRepository.LoadAsync(ct);
+        var id = string.IsNullOrWhiteSpace(npcId) ? profiles.DefaultNpcId : npcId;
+        var profile = profiles.GetRequiredProfile(id);
+        var affinityEngine = new AffinityEngine("gpt-5.1", _activeApiKey ?? string.Empty);
+        return await affinityEngine.LoadOrCreateAsync(id, profile, _affinityStore, ct);
+    }
+
+    public async Task SaveAffinityAsync(AffinityState state, CancellationToken ct = default) {
+        state.UpdatedAt = DateTimeOffset.UtcNow;
+        await _affinityStore.SaveAsync(state, ct);
+    }
+
+    public async Task<AffinityState> ResetAffinityAsync(string npcId, CancellationToken ct = default) {
+        var profiles = await _profileRepository.LoadAsync(ct);
+        var id = string.IsNullOrWhiteSpace(npcId) ? profiles.DefaultNpcId : npcId;
+        var profile = profiles.GetRequiredProfile(id);
+        var reset = new AffinityState {
+            NpcId = id,
+            Like = profile.Initial.Like,
+            Dislike = profile.Initial.Dislike,
+            Liked = profile.Initial.Liked,
+            Disliked = profile.Initial.Disliked,
+            Love = profile.Initial.Love,
+            Hate = profile.Initial.Hate,
+            Trust = profile.Initial.Trust,
+            Respect = profile.Initial.Respect,
+            SexualAwareness = profile.Initial.SexualAwareness,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        };
+        await _affinityStore.SaveAsync(reset, ct);
+        return reset;
+    }
+
+    public async Task<PsycheState> LoadPsycheAsync(string npcId, CancellationToken ct = default) {
+        var profiles = await _psycheProfileRepository.LoadAsync(ct);
+        var id = string.IsNullOrWhiteSpace(npcId) ? profiles.DefaultNpcId : npcId;
+        var profile = profiles.GetRequiredProfile(id);
+        return await _psycheOrchestrator.LoadOrCreateAsync(id, profile, _psycheStore, ct);
+    }
+
+    public async Task SavePsycheAsync(PsycheState state, CancellationToken ct = default) {
+        state.UpdatedAt = DateTimeOffset.UtcNow;
+        await _psycheStore.SaveAsync(state, ct);
+    }
+
+    public async Task<PsycheState> ResetPsycheAsync(string npcId, CancellationToken ct = default) {
+        var profiles = await _psycheProfileRepository.LoadAsync(ct);
+        var id = string.IsNullOrWhiteSpace(npcId) ? profiles.DefaultNpcId : npcId;
+        await _psycheStore.DeleteAsync(id, ct);
+        var profile = profiles.GetRequiredProfile(id);
+        return await _psycheOrchestrator.LoadOrCreateAsync(id, profile, _psycheStore, ct);
     }
 
     public async Task<IReadOnlyList<string>> GetAvailableSessionIdsAsync(CancellationToken ct) {
@@ -592,6 +636,9 @@ public sealed class ConversationRuntime {
             state.NpcId = profiles.DefaultNpcId;
             await _store.SaveAsync(state, ct);
         }
+
+        var currentNpcId = string.IsNullOrWhiteSpace(state.NpcId) ? profiles.DefaultNpcId : state.NpcId;
+        _currentNpcDisplayName = profiles.GetRequiredProfile(currentNpcId).DisplayName;
     }
 
     public async Task<string> GetCurrentNpcIdAsync(CancellationToken ct) {
@@ -607,6 +654,7 @@ public sealed class ConversationRuntime {
         state.NpcId = npcId.Trim();
         await _store.SaveAsync(state, ct);
         var profile = profiles.GetRequiredProfile(state.NpcId);
+        _currentNpcDisplayName = profile.DisplayName;
         var affinityEngine = new AffinityEngine("gpt-5.1", _activeApiKey ?? string.Empty);
         await affinityEngine.LoadOrCreateAsync(state.NpcId, profile, _affinityStore, ct);
     }
@@ -624,9 +672,9 @@ public sealed class ConversationRuntime {
 
     private static string BuildPsycheSummary(string npcId, PsycheProfileConfig profile, AffinityState affinity, PsycheState psyche, string recentContext) {
         var sb = new StringBuilder();
-        sb.AppendLine($"Psyche: {npcId}");
-        sb.AppendLine($"Mood current   : valence={psyche.Mood.CurrentValence:F1}, arousal={psyche.Mood.CurrentArousal:F1}, control={psyche.Mood.CurrentControl:F1}");
-        sb.AppendLine($"Mood baseline  : valence={psyche.Mood.BaselineValence:F1}, arousal={psyche.Mood.BaselineArousal:F1}, control={psyche.Mood.BaselineControl:F1}");
+        sb.AppendLine($"心理状態: {npcId}");
+        sb.AppendLine($"現在ムード    : valence={psyche.Mood.CurrentValence:F1}, arousal={psyche.Mood.CurrentArousal:F1}, control={psyche.Mood.CurrentControl:F1}");
+        sb.AppendLine($"基準ムード    : valence={psyche.Mood.BaselineValence:F1}, arousal={psyche.Mood.BaselineArousal:F1}, control={psyche.Mood.BaselineControl:F1}");
 
         var desireTop = Enum.GetValues<DesireAxis>()
             .Select(axis => new { Axis = axis, Effective = PsycheOrchestrator.Effective(GetOrZero(psyche.DesireTrait, axis), GetOrZero(psyche.DesireDeficit, axis)) })
@@ -634,7 +682,7 @@ public sealed class ConversationRuntime {
             .Take(profile.K.KDesire)
             .ToList();
 
-        sb.AppendLine($"Desire top{profile.K.KDesire} (effective = trait + deficit):");
+        sb.AppendLine($"Desire 上位{profile.K.KDesire}（effective = trait + deficit）:");
         foreach (var item in desireTop) {
             sb.AppendLine($"- {item.Axis}: {item.Effective:F1}");
         }
@@ -643,7 +691,7 @@ public sealed class ConversationRuntime {
         var hateOk = affinity.Hate < profile.LibidoGate.MaxHate;
         var keywordHit = profile.LibidoGate.SexualKeywords.Any(k => recentContext.Contains(k, StringComparison.OrdinalIgnoreCase));
         var gated = !StateNarrator.EvaluateLibidoGate(profile, affinity, string.Empty, recentContext);
-        sb.AppendLine($"Libido gate: {(gated ? "gated" : "open")} (trust {affinity.Trust:F1}/{profile.LibidoGate.MinTrust:F1}, hate {affinity.Hate:F1}/{profile.LibidoGate.MaxHate:F1}, keywordHit={keywordHit}, trustOk={trustOk}, hateOk={hateOk})");
+        sb.AppendLine($"Libidoゲート: {(gated ? "閉" : "開")} (trust {affinity.Trust:F1}/{profile.LibidoGate.MinTrust:F1}, hate {affinity.Hate:F1}/{profile.LibidoGate.MaxHate:F1}, keywordHit={keywordHit}, trustOk={trustOk}, hateOk={hateOk})");
         if (!gated) {
             var libidoTop = Enum.GetValues<LibidoAxis>()
                 .Select(axis => new { Axis = axis, Effective = PsycheOrchestrator.Effective(GetOrZero(psyche.Libido.Trait, axis), GetOrZero(psyche.Libido.Deficit, axis)) })
@@ -651,7 +699,7 @@ public sealed class ConversationRuntime {
                 .Take(profile.K.KLibido)
                 .ToList();
 
-            sb.AppendLine($"Libido top{profile.K.KLibido} (effective = trait + deficit):");
+            sb.AppendLine($"Libido 上位{profile.K.KLibido}（effective = trait + deficit）:");
             foreach (var item in libidoTop) {
                 sb.AppendLine($"- {item.Axis}: {item.Effective:F1}");
             }
@@ -662,6 +710,14 @@ public sealed class ConversationRuntime {
 
     private static double GetOrZero<T>(Dictionary<T, double> map, T key) where T : notnull => map.TryGetValue(key, out var value) ? value : 0;
 
+
+    private static string EnsureTrailingNewline(string text) {
+        if (string.IsNullOrEmpty(text)) {
+            return "\n";
+        }
+
+        return text.EndsWith('\n') ? text : text + '\n';
+    }
     private static bool TryParseCommand(string input, out string cmd, out string arg) {
         cmd = string.Empty;
         arg = string.Empty;

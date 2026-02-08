@@ -1,12 +1,18 @@
 namespace Conversation;
 
 using Conversation.Diagnostics;
+using Conversation.Standee;
+using Conversation.Ui;
+using Conversation.ViewModels;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 public partial class MainWindow : Window {
@@ -19,9 +25,12 @@ public partial class MainWindow : Window {
     private CancellationTokenSource? _turnCts;
     private bool _turnInProgress;
     private bool _isLoadingSelectors;
+    private bool _autoScrollEnabled = true;
     private string _lastAssistantMessage = string.Empty;
+    private string _userDisplayName = "あなた";
 
-    public ObservableCollection<string> Transcript { get; } = new();
+    public ObservableCollection<ChatMessage> Transcript { get; } = new();
+    public StandeeService Standee => _app.StandeeService;
 
     public MainWindow() {
         InitializeComponent();
@@ -30,11 +39,12 @@ public partial class MainWindow : Window {
         _runtime = new ConversationRuntime(_app.StandeeService);
         _uiSettingsPath = Path.Combine(AppPaths.SettingsDir, "ui_settings.json");
         _prefs = UiPreferences.Load(_uiSettingsPath);
-        _sink = new WindowTranscriptSink(Dispatcher, Transcript, value => _lastAssistantMessage = value);
+        _sink = new WindowTranscriptSink(Dispatcher, Transcript, () => _userDisplayName, () => _runtime.GetCurrentNpcDisplayName(), value => _lastAssistantMessage = value);
 
         Loaded += OnLoaded;
         Closing += OnClosing;
         PreviewKeyDown += OnPreviewKeyDown;
+        Transcript.CollectionChanged += Transcript_OnCollectionChanged;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e) {
@@ -44,8 +54,11 @@ public partial class MainWindow : Window {
             Left = _prefs.WindowLeft;
             Top = _prefs.WindowTop;
             TurnsTextBox.Text = Math.Max(1, _prefs.LastTurnsToLoad).ToString();
+            _autoScrollEnabled = _prefs.AutoScrollEnabled;
 
-            BindSettingsToUi();
+            _userDisplayName = string.IsNullOrWhiteSpace(_runtime.Settings.UserDisplayName) ? "あなた" : _runtime.Settings.UserDisplayName.Trim();
+            ApplyUiPreferencesToVisuals();
+
             await _runtime.EnsureInitializedAsync(CancellationToken.None);
             await LoadSelectorsAsync();
 
@@ -66,13 +79,15 @@ public partial class MainWindow : Window {
             }
 
             await RefreshConfigurationStateAsync();
+
+            TranscriptList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(TranscriptList_OnScrollChanged));
         }
         catch (Exception ex) {
             ReportError(ex);
         }
     }
 
-    private async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e) {
+    private async void OnClosing(object? sender, CancelEventArgs e) {
         try {
             _prefs.WindowWidth = Width;
             _prefs.WindowHeight = Height;
@@ -81,6 +96,7 @@ public partial class MainWindow : Window {
             _prefs.LastSessionId = _runtime.CurrentSessionId;
             _prefs.LastNpcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
             _prefs.LastTurnsToLoad = ParseTurnsCount();
+            _prefs.AutoScrollEnabled = _autoScrollEnabled;
             await UiPreferences.SaveAsync(_uiSettingsPath, _prefs);
         }
         catch (Exception ex) {
@@ -88,11 +104,11 @@ public partial class MainWindow : Window {
         }
     }
 
-    private void BindSettingsToUi() {
-        MainModelTextBox.Text = _runtime.Settings.Models.MainChat;
-        StandeeModelTextBox.Text = _runtime.Settings.Models.StandeeJudge;
-        StandeeEnabledCheckBox.IsChecked = _runtime.Settings.Standee.Enabled;
-        StandeeMonitorTextBox.Text = _runtime.Settings.Standee.MonitorIndex.ToString();
+    private void ApplyUiPreferencesToVisuals() {
+        StandeeColumn.Width = new GridLength(Math.Clamp(_prefs.StandeePanelWidth, 220, 960));
+        StandeePanel.Background = _prefs.StandeeBackgroundDark
+            ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF1E1E24"))
+            : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFF0F0F0"));
     }
 
     private async Task RefreshConfigurationStateAsync() {
@@ -100,6 +116,7 @@ public partial class MainWindow : Window {
         if (!ok) {
             ConfigBanner.Visibility = Visibility.Visible;
             ConfigBannerText.Text = _runtime.ConfigurationErrorMessage;
+            OpenSettingsFromBannerButton.Visibility = Visibility.Visible;
             SendButton.IsEnabled = false;
             InputBox.IsEnabled = false;
             _sink.AppendSystemLine(_runtime.ConfigurationErrorMessage);
@@ -107,6 +124,7 @@ public partial class MainWindow : Window {
         }
 
         ConfigBanner.Visibility = Visibility.Collapsed;
+        OpenSettingsFromBannerButton.Visibility = Visibility.Collapsed;
         SendButton.IsEnabled = !_turnInProgress;
         InputBox.IsEnabled = !_turnInProgress;
     }
@@ -129,11 +147,11 @@ public partial class MainWindow : Window {
     }
 
     private int ParseTurnsCount()
-        => int.TryParse(TurnsTextBox.Text, out var n) ? Math.Clamp(n, 1, 200) : 20;
+        => int.TryParse(TurnsTextBox.Text, out var n) ? Math.Clamp(n, 1, 200) : Math.Max(1, _prefs.LastTurnsToLoad);
 
     private async Task ReloadTranscriptAsync() {
         Transcript.Clear();
-        var turns = await _runtime.GetLastTurnsAsync(_runtime.CurrentSessionId, ParseTurnsCount(), CancellationToken.None);
+        var turns = await _runtime.GetLastTurnsAsync(_runtime.CurrentSessionId, ParseTurnsCount(), _userDisplayName, CancellationToken.None);
         foreach (var line in turns) {
             Transcript.Add(line);
         }
@@ -204,7 +222,7 @@ public partial class MainWindow : Window {
 
         try {
             await _runtime.SetCurrentNpcAsync(npcId, CancellationToken.None);
-            _sink.AppendSystemLine($"NPC switched: {npcId}");
+            _sink.AppendSystemLine($"キャラクターを切り替えました: {npcId}");
         }
         catch (Exception ex) {
             ReportError(ex);
@@ -231,14 +249,25 @@ public partial class MainWindow : Window {
         }
     }
 
-    private async void SaveSettingsButton_OnClick(object sender, RoutedEventArgs e) {
+    private async void OpenSettingsButton_OnClick(object sender, RoutedEventArgs e) {
         try {
-            _runtime.Settings.Models.MainChat = string.IsNullOrWhiteSpace(MainModelTextBox.Text) ? "gpt-5.2" : MainModelTextBox.Text.Trim();
-            _runtime.Settings.Models.StandeeJudge = string.IsNullOrWhiteSpace(StandeeModelTextBox.Text) ? "gpt-5.1" : StandeeModelTextBox.Text.Trim();
-            _runtime.Settings.Standee.Enabled = StandeeEnabledCheckBox.IsChecked == true;
-            _runtime.Settings.Standee.MonitorIndex = int.TryParse(StandeeMonitorTextBox.Text, out var idx) ? Math.Max(0, idx) : 0;
+            var npcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
+            var settingsWindow = new SettingsWindow(_runtime, _runtime.Settings, _prefs, npcId) {
+                Owner = this,
+            };
+
+            if (settingsWindow.ShowDialog() != true) {
+                return;
+            }
 
             _runtime.SaveSettings();
+            await UiPreferences.SaveAsync(_uiSettingsPath, _prefs);
+
+            _userDisplayName = string.IsNullOrWhiteSpace(_runtime.Settings.UserDisplayName) ? "あなた" : _runtime.Settings.UserDisplayName.Trim();
+            _autoScrollEnabled = _prefs.AutoScrollEnabled;
+            TurnsTextBox.Text = Math.Max(1, _prefs.LastTurnsToLoad).ToString();
+            ApplyUiPreferencesToVisuals();
+
             _app.StandeeService.ApplyRuntimeSettings(_runtime.Settings);
             if (_runtime.Settings.Standee.Enabled) {
                 await _app.StandeeService.ShowAsync();
@@ -248,7 +277,7 @@ public partial class MainWindow : Window {
             }
 
             await RefreshConfigurationStateAsync();
-            _sink.AppendSystemLine("Settings saved.");
+            _sink.AppendSystemLine("設定を保存しました。");
         }
         catch (Exception ex) {
             ReportError(ex);
@@ -275,7 +304,7 @@ public partial class MainWindow : Window {
     private void CopyLastAssistantButton_OnClick(object sender, RoutedEventArgs e) {
         if (!string.IsNullOrWhiteSpace(_lastAssistantMessage)) {
             Clipboard.SetText(_lastAssistantMessage);
-            _sink.AppendSystemLine("Copied last assistant message.");
+            _sink.AppendSystemLine("直近のAIメッセージをコピーしました。");
         }
     }
 
@@ -284,45 +313,82 @@ public partial class MainWindow : Window {
         _lastAssistantMessage = string.Empty;
     }
 
+    private void Transcript_OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
+        if (!_autoScrollEnabled || e.Action != NotifyCollectionChangedAction.Add || Transcript.Count == 0) {
+            return;
+        }
+
+        TranscriptList.ScrollIntoView(Transcript[^1]);
+    }
+
+    private void TranscriptList_OnScrollChanged(object sender, ScrollChangedEventArgs e) {
+        if (e.ExtentHeightChange == 0 && e.VerticalChange != 0) {
+            var atBottom = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - 2;
+            if (!atBottom) {
+                _autoScrollEnabled = false;
+            }
+        }
+    }
+
     private void ReportError(Exception ex) {
-        _sink.AppendSystemLine($"Error: {ex.Message}");
+        _sink.AppendSystemLine($"エラー: {ex.Message}");
         Log.Error(ex, "MainWindow");
     }
 
     private sealed class WindowTranscriptSink : ITranscriptSink {
         private readonly Dispatcher _dispatcher;
-        private readonly ObservableCollection<string> _transcript;
+        private readonly ObservableCollection<ChatMessage> _transcript;
+        private readonly Func<string> _userSpeakerProvider;
+        private readonly Func<string> _assistantSpeakerProvider;
         private readonly Action<string> _assistantFinalized;
         private readonly DispatcherTimer _flushTimer;
         private readonly object _bufferGate = new();
         private readonly StringBuilder _buffer = new();
-        private int? _assistantIndex;
+        private ChatMessage? _assistantMessage;
 
-        public WindowTranscriptSink(Dispatcher dispatcher, ObservableCollection<string> transcript, Action<string> assistantFinalized) {
+        public WindowTranscriptSink(Dispatcher dispatcher, ObservableCollection<ChatMessage> transcript, Func<string> userSpeakerProvider, Func<string> assistantSpeakerProvider, Action<string> assistantFinalized) {
             _dispatcher = dispatcher;
             _transcript = transcript;
+            _userSpeakerProvider = userSpeakerProvider;
+            _assistantSpeakerProvider = assistantSpeakerProvider;
             _assistantFinalized = assistantFinalized;
             _flushTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(75), DispatcherPriority.Background, (_, _) => Flush(), _dispatcher);
         }
 
-        public void AppendUserLine(string text) => Post(() => _transcript.Add($"Ashwell > {text}"));
+        public void AppendUserLine(string text) => Post(() => _transcript.Add(new ChatMessage {
+            Role = "user",
+            Speaker = _userSpeakerProvider(),
+            Text = text,
+            Timestamp = DateTime.Now,
+        }));
 
         public void AppendSystemLine(string text) => Post(() => {
             if (text == "__CLEAR_TRANSCRIPT__") {
                 _transcript.Clear();
-                _assistantIndex = null;
+                _assistantMessage = null;
                 lock (_bufferGate) {
                     _buffer.Clear();
                 }
                 _flushTimer.Stop();
                 return;
             }
-            _transcript.Add($"[System] {text}");
+
+            _transcript.Add(new ChatMessage {
+                Role = "system",
+                Speaker = "システム",
+                Text = text,
+                Timestamp = DateTime.Now,
+            });
         });
 
         public void BeginAssistantLine() => Post(() => {
-            _assistantIndex = _transcript.Count;
-            _transcript.Add("Stella > ");
+            _assistantMessage = new ChatMessage {
+                Role = "assistant",
+                Speaker = _assistantSpeakerProvider(),
+                Text = string.Empty,
+                Timestamp = DateTime.Now,
+            };
+            _transcript.Add(_assistantMessage);
             lock (_bufferGate) {
                 _buffer.Clear();
             }
@@ -350,12 +416,17 @@ public partial class MainWindow : Window {
                 Flush();
                 _flushTimer.Stop();
                 FinalizeCurrent();
-                _transcript.Add("[System] (cancelled)");
+                _transcript.Add(new ChatMessage {
+                    Role = "system",
+                    Speaker = "システム",
+                    Text = "（キャンセルされました）",
+                    Timestamp = DateTime.Now,
+                });
             });
         }
 
         private void Flush() {
-            if (_assistantIndex is not int idx || idx < 0 || idx >= _transcript.Count) {
+            if (_assistantMessage is null) {
                 return;
             }
 
@@ -366,16 +437,17 @@ public partial class MainWindow : Window {
                 _buffer.Clear();
             }
 
-            _transcript[idx] += chunk;
+            _assistantMessage.Text += chunk;
         }
 
         private void FinalizeCurrent() {
-            if (_assistantIndex is int idx && idx >= 0 && idx < _transcript.Count) {
-                var line = _transcript[idx];
-                const string prefix = "Stella > ";
-                _assistantFinalized(line.StartsWith(prefix, StringComparison.Ordinal) ? line[prefix.Length..] : line);
+            if (_assistantMessage is not null) {
+                if (!_assistantMessage.Text.EndsWith('\n')) {
+                    _assistantMessage.Text += '\n';
+                }
+                _assistantFinalized(_assistantMessage.Text);
             }
-            _assistantIndex = null;
+            _assistantMessage = null;
         }
 
         private void Post(Action action) {

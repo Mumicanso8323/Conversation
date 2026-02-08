@@ -6,6 +6,7 @@ using System.Text.Json;
 public sealed class AppSettings {
     public ModelSettings Models { get; set; } = new();
     public StandeeSettings Standee { get; set; } = new();
+    public string UserDisplayName { get; set; } = "あなた";
 
     public static AppSettings Load() {
         try {

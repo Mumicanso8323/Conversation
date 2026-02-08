@@ -27,6 +27,18 @@ public static class AppPaths {
     public static string DataPsycheProfilesPath { get; } = Path.Combine(DataRoot, "psyche_profiles.json");
     public static string SettingsFilePath { get; } = Path.Combine(SettingsDir, "settings.json");
 
+    public static string BaseAssetsDir { get; } = Path.Combine(BaseDirectory, "assets");
+    public static string DataAssetsDir { get; } = Path.Combine(DataRoot, "assets");
+    public static string EffectiveAssetsDir { get; } = PreferDataOrBase(DataAssetsDir, BaseAssetsDir);
+
+    public static string BasePromptsPath { get; } = Path.Combine(BaseDirectory, "prompts.json");
+    public static string DataPromptsPath { get; } = Path.Combine(DataRoot, "prompts.json");
+    public static string EffectivePromptsPath { get; } = PreferDataOrBase(DataPromptsPath, BasePromptsPath);
+
+    public static string BaseUiStringsPath { get; } = Path.Combine(BaseDirectory, "ui_strings.json");
+    public static string DataUiStringsPath { get; } = Path.Combine(DataRoot, "ui_strings.json");
+    public static string EffectiveUiStringsPath { get; } = PreferDataOrBase(DataUiStringsPath, BaseUiStringsPath);
+
     private static string ResolveDataRoot() {
         try {
             var baseHasLegacy = Directory.Exists(BaseSessionsDir)
@@ -73,5 +85,9 @@ public static class AppPaths {
         Directory.CreateDirectory(Path.Combine(root, "npc_states"));
         Directory.CreateDirectory(Path.Combine(root, "psyche_states"));
         Directory.CreateDirectory(Path.Combine(root, "settings"));
+    }
+
+    private static string PreferDataOrBase(string dataPath, string basePath) {
+        return File.Exists(dataPath) || Directory.Exists(dataPath) ? dataPath : basePath;
     }
 }
