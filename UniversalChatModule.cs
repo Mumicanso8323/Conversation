@@ -1,5 +1,7 @@
 ﻿namespace Conversation;
 
+using System.IO;
+
 #nullable enable
 #pragma warning disable OPENAI001
 

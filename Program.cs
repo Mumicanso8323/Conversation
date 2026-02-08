@@ -1,5 +1,6 @@
 ﻿namespace Conversation;
 
+using System.IO;
 using System.Text.Json;
 using Conversation.Affinity;
 using Conversation.Psyche;
