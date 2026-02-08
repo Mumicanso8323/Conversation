@@ -2,6 +2,7 @@
 
 using System.Text.Json;
 using Conversation.Affinity;
+using Conversation.Psyche;
 
 class Program {
     private const string AI = "Stella ";
@@ -87,8 +88,11 @@ class Program {
 
         IChatStateStore store = new JsonFileChatStateStore("sessions");
         IAffinityStore affinityStore = new JsonFileAffinityStore("npc_states");
+        IPsycheStore psycheStore = new JsonFilePsycheStore("psyche_states");
         var profileRepository = new JsonAffinityProfileRepository("npc_profiles.json");
+        var psycheProfileRepository = new JsonPsycheProfileRepository("psyche_profiles.json");
         var profiles = await profileRepository.LoadAsync();
+        var psycheProfiles = await psycheProfileRepository.LoadAsync();
 
         var chat = new UniversalChatModule(
             new ChatModuleOptions(
@@ -102,6 +106,9 @@ class Program {
         );
 
         var affinityEngine = new AffinityEngine("gpt-5.1", apiKey);
+        var psycheOrchestrator = new PsycheOrchestrator();
+        var stateNarrator = new StateNarrator();
+        var psycheJudge = new PsycheJudge("gpt-5.1", apiKey);
 
         chat.AddChatFunctionTool(
             name: "roll_dice",
@@ -137,9 +144,12 @@ class Program {
         while (true) {
             currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
             profiles = await profileRepository.LoadAsync();
+            psycheProfiles = await psycheProfileRepository.LoadAsync();
             var npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
             var profile = profiles.GetRequiredProfile(npcId);
+            var psycheProfile = psycheProfiles.GetRequiredProfile(npcId);
             var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
+            var psyche = await psycheOrchestrator.LoadOrCreateAsync(npcId, psycheProfile, psycheStore, CancellationToken.None);
 
             Console.Write($"\n{YOU}> ");
             var input = Console.ReadLine();
@@ -172,14 +182,21 @@ class Program {
             affinityEngine.ApplyDelta(affinity, profile, delta);
             await affinityStore.SaveAsync(affinity, CancellationToken.None);
 
+            var recentContext = BuildRecentContext(currentSession.Turns, 6);
+            var narrated = stateNarrator.BuildJudgeStateText(npcId, psycheProfile, affinity, psyche, input, recentContext);
+            var judged = await psycheJudge.EvaluateAsync(input, profile.DisplayName, recentContext, narrated, CancellationToken.None);
+            psycheOrchestrator.ApplyDelta(psyche, psycheProfile, judged.PsycheDelta);
+            await psycheStore.SaveAsync(psyche, CancellationToken.None);
+
             var roleplayState = affinityEngine.BuildRoleplayStatePrompt(npcId, profile, affinity);
             var forcedReply = affinityEngine.MaybeGenerateBlockedReply(affinity, profile);
+            var additionalSystem = $"{roleplayState}\n\n{judged.Directives.ToSystemBlock()}";
 
             Console.Write($"{AI}> ");
             await foreach (var chunk in chat.SendStreamingAsync(
                 currentSessionId,
                 input,
-                new ChatRequestContext(roleplayState, forcedReply))) {
+                new ChatRequestContext(additionalSystem, forcedReply))) {
                 foreach (var ch in chunk) Console.Write(ch);
             }
 
@@ -393,6 +410,17 @@ private static async Task PrintLastTurnsAsync(IChatStateStore store, string sess
 
     private static void PrintHelp() {
         Console.WriteLine("Commands: /save /load <id> /npc <id> /aff /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
+    }
+
+    private static string BuildRecentContext(IReadOnlyList<ChatTurn> turns, int maxTurns) {
+        if (turns.Count == 0) return "(none)";
+        var start = Math.Max(0, turns.Count - maxTurns);
+        return string.Join("\n", turns.Skip(start).Select(t => $"{t.Role}: {Shorten(t.Text, 120)}"));
+    }
+
+    private static string Shorten(string text, int max) {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        return text.Length <= max ? text : text[..max] + "…";
     }
 
     private sealed record CommandResult(bool Handled, string? NextSessionId, AffinityProfileRoot? ProfileRoot);
