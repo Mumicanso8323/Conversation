@@ -384,12 +384,20 @@ class Program {
         }
     }
 
-    private sealed class ConsoleUi {
+    private sealed partial class ConsoleUi {
+        private const string Esc = "\u001b";
+        private readonly object _gate = new();
+        private readonly bool _useAnsiStatus;
         private string _statusText = string.Empty;
         private int _lastWidth = -1;
         private int _lastHeight = -1;
 
+        public ConsoleUi() {
+            _useAnsiStatus = !Console.IsOutputRedirected && TryEnableAnsiStatus();
+        }
+
         public void SetStatus(string text, bool force = false) {
+            lock (_gate) {
             if (Console.IsOutputRedirected) {
                 if (force) {
                     Console.WriteLine(text);
@@ -405,7 +413,8 @@ class Program {
             }
 
             _statusText = text;
-            DrawStatusLine();
+            RenderStatusLine();
+            }
         }
 
         public void WriteLog(string text) {
@@ -421,6 +430,7 @@ class Program {
         }
 
         private void WriteInternal(string text, bool appendNewLine) {
+            lock (_gate) {
             if (Console.IsOutputRedirected) {
                 if (appendNewLine) {
                     Console.WriteLine(text);
@@ -433,37 +443,67 @@ class Program {
             }
 
             EnsureLayout();
-            ClearStatusLine();
             EnsureCursorInLogArea();
 
-            foreach (var ch in text) {
-                WriteChar(ch);
-            }
+            WriteLogText(text);
 
             if (appendNewLine) {
                 WriteNewLine();
             }
 
-            DrawStatusLine();
+            EnsureCursorInLogArea();
+            RenderStatusLine();
+            }
         }
 
-        private void WriteChar(char ch) {
-            if (ch == '\r') {
-                SafeSetCursor(0, Console.CursorTop);
+        private void WriteLogText(string text) {
+            if (string.IsNullOrEmpty(text)) {
                 return;
             }
 
-            if (ch == '\n') {
+            int i = 0;
+            while (i < text.Length) {
+                int newLineIndex = text.IndexOf('\n', i);
+                bool hasNewLine = newLineIndex >= 0;
+                string segment = hasNewLine ? text[i..newLineIndex] : text[i..];
+
+                if (segment.Length > 0) {
+                    if (segment[^1] == '\r') {
+                        segment = segment[..^1];
+                    }
+
+                    WriteSegment(segment);
+                }
+
+                if (!hasNewLine) {
+                    break;
+                }
+
                 WriteNewLine();
-                return;
+                i = newLineIndex + 1;
             }
+        }
 
-            if (Console.CursorTop >= LogBottom && Console.CursorLeft >= Math.Max(0, Console.WindowWidth - 1)) {
-                ScrollLogArea();
+        private void WriteSegment(string segment) {
+            int offset = 0;
+            while (offset < segment.Length) {
+                EnsureCursorInLogArea();
+                int width = Math.Max(1, Console.WindowWidth);
+                int available = Math.Max(1, width - Console.CursorLeft);
+                int remaining = segment.Length - offset;
+                int take = Math.Min(available, remaining);
+                Console.Write(segment.AsSpan(offset, take));
+                offset += take;
+
+                if (offset < segment.Length) {
+                    if (Console.CursorTop >= LogBottom) {
+                        ScrollLogArea();
+                    }
+                    else {
+                        SafeSetCursor(0, Console.CursorTop + 1);
+                    }
+                }
             }
-
-            Console.Write(ch);
-            EnsureCursorInLogArea();
         }
 
         private void WriteNewLine() {
@@ -496,7 +536,7 @@ class Program {
             _lastWidth = width;
             _lastHeight = height;
             EnsureCursorInLogArea();
-            DrawStatusLine();
+            RenderStatusLine();
         }
 
         private void EnsureCursorInLogArea() {
@@ -505,35 +545,46 @@ class Program {
             SafeSetCursor(left, top);
         }
 
-        private void DrawStatusLine() {
+        private void RenderStatusLine() {
             if (Console.IsOutputRedirected) {
+                return;
+            }
+
+            string fitted = FitStatusText();
+            if (_useAnsiStatus) {
+                int bottomRow = Math.Max(1, Console.WindowHeight);
+                Console.Write($"{Esc}[s{Esc}[{bottomRow};1H{Esc}[2K");
+                Console.Write(fitted);
+                Console.Write($"{Esc}[u");
                 return;
             }
 
             int curLeft = Console.CursorLeft;
             int curTop = Console.CursorTop;
-            int width = Math.Max(1, Console.WindowWidth);
+            int restoreTop = Math.Clamp(curTop, 0, LogBottom);
+            int restoreLeft = Math.Clamp(curLeft, 0, Math.Max(0, Math.Max(1, Console.WindowWidth) - 1));
 
             SafeSetCursor(0, StatusLine);
-            string padded = _statusText.Length > width
-                ? _statusText[..width]
-                : _statusText.PadRight(width);
-            Console.Write(padded);
-            SafeSetCursor(Math.Clamp(curLeft, 0, Math.Max(0, width - 1)), Math.Clamp(curTop, 0, LogBottom));
+            int effectiveWidth = Math.Max(0, Math.Max(1, Console.WindowWidth) - 1);
+            if (effectiveWidth > 0) {
+                Console.Write(new string(' ', effectiveWidth));
+                SafeSetCursor(0, StatusLine);
+                Console.Write(fitted);
+            }
+
+            SafeSetCursor(restoreLeft, restoreTop);
         }
 
-        private void ClearStatusLine() {
-            if (Console.IsOutputRedirected) {
-                return;
+        private string FitStatusText() {
+            int effectiveWidth = Math.Max(0, Math.Max(1, Console.WindowWidth) - 1);
+            string normalized = (_statusText ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            if (effectiveWidth == 0) {
+                return string.Empty;
             }
 
-            int curLeft = Console.CursorLeft;
-            int curTop = Console.CursorTop;
-            int width = Math.Max(1, Console.WindowWidth);
-
-            SafeSetCursor(0, StatusLine);
-            Console.Write(new string(' ', width));
-            SafeSetCursor(Math.Clamp(curLeft, 0, Math.Max(0, width - 1)), Math.Clamp(curTop, 0, LogBottom));
+            return normalized.Length > effectiveWidth
+                ? normalized[..effectiveWidth]
+                : normalized.PadRight(effectiveWidth);
         }
 
         private int StatusLine => Math.Max(0, Console.WindowHeight - 1);
@@ -549,5 +600,40 @@ class Program {
             catch (IOException) {
             }
         }
+
+        private static bool TryEnableAnsiStatus() {
+            if (!OperatingSystem.IsWindows()) {
+                return true;
+            }
+
+            const int stdOutputHandle = -11;
+            const uint enableVirtualTerminalProcessing = 0x0004;
+
+            var handle = GetStdHandle(stdOutputHandle);
+            if (handle == IntPtr.Zero || handle == new IntPtr(-1)) {
+                return false;
+            }
+
+            if (!GetConsoleMode(handle, out uint mode)) {
+                return false;
+            }
+
+            if ((mode & enableVirtualTerminalProcessing) != 0) {
+                return true;
+            }
+
+            return SetConsoleMode(handle, mode | enableVirtualTerminalProcessing);
+        }
+
+        [System.Runtime.InteropServices.LibraryImport("kernel32.dll", SetLastError = true)]
+        private static partial IntPtr GetStdHandle(int nStdHandle);
+
+        [System.Runtime.InteropServices.LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static partial bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+
+        [System.Runtime.InteropServices.LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static partial bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
     }
 }
