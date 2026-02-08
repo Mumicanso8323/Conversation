@@ -80,6 +80,56 @@
                 </Grid>
             </TabItem>
 
+
+            <TabItem Header="ライブラリ">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="180"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="背景の保存範囲" />
+                    <TextBlock Grid.Row="0" Grid.Column="1" VerticalAlignment="Center" Foreground="#FF666666" Text="NPCごと（現在のキャラクターに紐付け）"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="背景ファイル" />
+                    <ComboBox x:Name="BackgroundFileCombo" Grid.Row="1" Grid.Column="1" Margin="0,10,0,0" SelectionChanged="BackgroundFileCombo_OnSelectionChanged" />
+
+                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Width="130" Content="背景ランダム" Click="RandomBackgroundButton_OnClick"/>
+                    </StackPanel>
+
+                    <Separator Grid.Row="3" Grid.ColumnSpan="2" Margin="0,12,0,8"/>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="BGMファイル" />
+                    <ComboBox x:Name="BgmFileCombo" Grid.Row="4" Grid.Column="1" SelectionChanged="BgmFileCombo_OnSelectionChanged" />
+
+                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Width="90" Content="再生" Click="PlayBgmButton_OnClick"/>
+                        <Button Width="90" Margin="8,0,0,0" Content="一時停止" Click="PauseBgmButton_OnClick"/>
+                        <Button Width="90" Margin="8,0,0,0" Content="停止" Click="StopBgmButton_OnClick"/>
+                        <Button Width="130" Margin="8,0,0,0" Content="BGMランダム" Click="RandomBgmButton_OnClick"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Text="音量"/>
+                        <Slider x:Name="BgmVolumeSlider" Width="180" Minimum="0" Maximum="100" Margin="8,0,0,0" ValueChanged="BgmVolumeSlider_OnValueChanged"/>
+                        <TextBlock x:Name="BgmVolumeText" Margin="8,0,0,0" VerticalAlignment="Center" Width="48"/>
+                        <CheckBox x:Name="BgmLoopCheckBox" Margin="12,0,0,0" VerticalAlignment="Center" Content="ループ" Checked="BgmLoopCheckBox_OnChecked" Unchecked="BgmLoopCheckBox_OnChecked"/>
+                        <CheckBox x:Name="SceneAutoSelectCheckBox" Margin="12,0,0,0" VerticalAlignment="Center" Content="自動選択" Checked="SceneAutoSelectCheckBox_OnChecked" Unchecked="SceneAutoSelectCheckBox_OnChecked"/>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
             <TabItem Header="Affinity">
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
@@ -238,6 +288,7 @@
                             <TreeViewItem Header="personas.stilla.system_instructions" Tag="prompts.personas.stilla.system_instructions"/>
                             <TreeViewItem Header="modules.psyche_judge.system_prompt" Tag="prompts.modules.psyche_judge.system_prompt"/>
                             <TreeViewItem Header="modules.standee_judge.system_prompt" Tag="prompts.modules.standee_judge.system_prompt"/>
+                            <TreeViewItem Header="modules.scene_judge.system_prompt" Tag="prompts.modules.scene_judge.system_prompt"/>
                             <TreeViewItem Header="raw" Tag="prompts.raw"/>
                         </TreeViewItem>
                         <TreeViewItem Header="psyche_profiles.json" Tag="psyche">

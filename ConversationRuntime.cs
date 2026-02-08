@@ -25,6 +25,7 @@ public sealed class ConversationRuntime {
     private UniversalChatModule? _chat;
     private PsycheJudge? _psycheJudge;
     private StandeeJudge? _standeeJudge;
+    private SceneJudge? _sceneJudge;
     private string? _activeApiKey;
     private string? _activeMainModel;
     private string? _activeStandeeModel;
@@ -77,7 +78,7 @@ public sealed class ConversationRuntime {
             var standeeModel = string.IsNullOrWhiteSpace(Settings.Models.StandeeJudge) ? "gpt-5.1" : Settings.Models.StandeeJudge;
             _prompts = await _promptRepository.LoadAsync();
 
-            if (_chat is null || _psycheJudge is null || _standeeJudge is null || _activeApiKey != apiKey || _activeMainModel != mainModel || _activeStandeeModel != standeeModel) {
+            if (_chat is null || _psycheJudge is null || _standeeJudge is null || _sceneJudge is null || _activeApiKey != apiKey || _activeMainModel != mainModel || _activeStandeeModel != standeeModel) {
                 _chat = new UniversalChatModule(
                     new ChatModuleOptions(
                         Model: mainModel,
@@ -110,6 +111,7 @@ public sealed class ConversationRuntime {
 
                 _psycheJudge = new PsycheJudge("gpt-5.1", apiKey, () => _prompts.GetModulePrompt("psyche_judge", string.Empty));
                 _standeeJudge = new StandeeJudge(standeeModel, apiKey, () => _prompts.GetModulePrompt("standee_judge", string.Empty));
+                _sceneJudge = new SceneJudge(standeeModel, apiKey, () => _prompts.GetModulePrompt("scene_judge", string.Empty));
                 _activeApiKey = apiKey;
                 _activeMainModel = mainModel;
                 _activeStandeeModel = standeeModel;
@@ -645,6 +647,38 @@ public sealed class ConversationRuntime {
         var profiles = await _profileRepository.LoadAsync(ct);
         var state = await _store.LoadAsync(CurrentSessionId, ct);
         return string.IsNullOrWhiteSpace(state.NpcId) ? profiles.DefaultNpcId : state.NpcId;
+    }
+
+    public async Task<SceneJudgeResult> RecommendSceneAsync(string userText, CancellationToken ct) {
+        try {
+            if (!await TryInitializeAsync()) {
+                return SceneJudgeResult.NoChange;
+            }
+
+            var currentSession = await _store.LoadAsync(CurrentSessionId, ct);
+            var profiles = await _profileRepository.LoadAsync(ct);
+            var psycheProfiles = await _psycheProfileRepository.LoadAsync(ct);
+            var npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
+            var profile = profiles.GetRequiredProfile(npcId);
+            var psycheProfile = psycheProfiles.GetRequiredProfile(npcId);
+
+            var affinityEngine = new AffinityEngine("gpt-5.1", _activeApiKey ?? string.Empty);
+            var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, _affinityStore, ct);
+            var psyche = await _psycheOrchestrator.LoadOrCreateAsync(npcId, psycheProfile, _psycheStore, ct);
+
+            var assets = AssetScanner.Scan();
+            if (assets.BgmFiles.Count == 0 && assets.BackgroundFiles.Count == 0) {
+                return SceneJudgeResult.NoChange;
+            }
+
+            var recentContext = BuildRecentContext(currentSession.Turns, 6);
+            var narrated = _stateNarrator.BuildJudgeStateText(npcId, psycheProfile, affinity, psyche, userText, recentContext);
+            return await _sceneJudge!.EvaluateAsync(userText, profile.DisplayName, recentContext, narrated, assets.BgmFiles, assets.BackgroundFiles, ct);
+        }
+        catch (Exception ex) {
+            Log.Error(ex, "RecommendSceneAsync");
+            return SceneJudgeResult.NoChange;
+        }
     }
 
     public async Task SetCurrentNpcAsync(string npcId, CancellationToken ct) {
