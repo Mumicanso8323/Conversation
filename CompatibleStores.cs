@@ -59,7 +59,17 @@ public sealed class CompatibleAffinityStore : IAffinityStore {
     }
 
     public Task SaveAsync(AffinityState state, CancellationToken ct = default) => _primary.SaveAsync(state, ct);
-    public Task DeleteAsync(string npcId, CancellationToken ct = default) => _primary.DeleteAsync(npcId, ct);
+
+    // 削除メソッドがJsonFileAffinityStoreに存在しないため、ファイルを直接削除する実装に修正
+    public Task DeleteAsync(string npcId, CancellationToken ct = default)
+    {
+        var path = Path.Combine(_primaryDir, $"{npcId}.json");
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+        return Task.CompletedTask;
+    }
 }
 
 public sealed class CompatiblePsycheStore : IPsycheStore {
