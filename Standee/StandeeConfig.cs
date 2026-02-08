@@ -5,12 +5,16 @@ namespace Conversation.Standee;
 
 public sealed class StandeeConfig {
     public bool Enabled { get; set; } = true;
-    public int MonitorIndex { get; set; } = 1;
-    public string PipeName { get; set; } = "conversation-standee";
-    public bool AlwaysOnTop { get; set; } = true;
+    public int MonitorIndex { get; set; } = 0;
+    public bool Topmost { get; set; } = true;
+    public bool ShowInTaskbar { get; set; } = false;
+    public bool DebugVisibleBackground { get; set; } = false;
+    public double Scale { get; set; } = 1.0;
+    public bool ClickThrough { get; set; } = false;
     public StandeeWindowConfig Window { get; set; } = new();
 
-    public static StandeeConfig LoadOrDefault(string path) {
+    public static StandeeConfig LoadFromBaseDirectory() {
+        var path = Path.Combine(AppContext.BaseDirectory, "standee_config.json");
         try {
             if (!File.Exists(path)) {
                 return new StandeeConfig();
@@ -33,5 +37,4 @@ public sealed class StandeeWindowConfig {
     public double? Y { get; set; }
     public double? Width { get; set; }
     public double? Height { get; set; }
-    public double? Scale { get; set; } = 1.0;
 }
