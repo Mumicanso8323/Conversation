@@ -403,3 +403,7 @@ FodyWeavers.xsd
 
 # assets
 *.png
+*.mp3
+*.wav
+*.m4a
+*.jpg
