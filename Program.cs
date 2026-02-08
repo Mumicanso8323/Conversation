@@ -1,6 +1,7 @@
 ﻿namespace Conversation;
 
 using System.Text.Json;
+using Conversation.Affinity;
 
 class Program {
     private static readonly Dictionary<string, string> PersonaPresets = new(StringComparer.OrdinalIgnoreCase) {
@@ -65,6 +66,10 @@ SUMMARY BEHAVIORAL LINE
             ?? throw new InvalidOperationException("OPENAI_API_KEY not set");
 
         IChatStateStore store = new JsonFileChatStateStore("sessions");
+        IAffinityStore affinityStore = new JsonFileAffinityStore("npc_states");
+        var profileRepository = new JsonAffinityProfileRepository("npc_profiles.json");
+        var profiles = await profileRepository.LoadAsync();
+
         var chat = new UniversalChatModule(
             new ChatModuleOptions(
                 Model: "gpt-5.2",
@@ -75,6 +80,9 @@ SUMMARY BEHAVIORAL LINE
             ),
             store
         );
+
+        var affinityEngine = new AffinityEngine("gpt-5.2-mini", apiKey);
+        var statusBar = new AffinityStatusBar();
 
         chat.AddChatFunctionTool(
             name: "roll_dice",
@@ -95,56 +103,166 @@ SUMMARY BEHAVIORAL LINE
         );
 
         string currentSessionId = "stilla";
+        var currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
+        if (string.IsNullOrWhiteSpace(currentSession.NpcId)) {
+            currentSession.NpcId = profiles.DefaultNpcId;
+            await store.SaveAsync(currentSession, CancellationToken.None);
+        }
 
         Console.WriteLine("Enterで送信。/exit で終了。");
         PrintHelp();
 
         while (true) {
-            Console.Write($"\n[{currentSessionId}] YOU> ");
+            currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
+            profiles = await profileRepository.LoadAsync();
+            var npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
+            var profile = profiles.GetRequiredProfile(npcId);
+            var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
+            statusBar.Render(npcId, profile.DisplayName, affinity);
+
+            Console.Write($"\n[{currentSessionId}/{npcId}] YOU> ");
             var input = Console.ReadLine();
             if (input is null) break;
 
             if (TryParseCommand(input, out var cmd, out var arg)) {
                 if (string.Equals(cmd, "exit", StringComparison.OrdinalIgnoreCase)) break;
 
-                var result = await HandleCommandAsync(cmd, arg, store, currentSessionId);
-                if (result.NextSessionId is not null)
+                var result = await HandleCommandAsync(cmd, arg, store, affinityStore, profileRepository, currentSessionId, affinityEngine);
+                if (result.NextSessionId is not null) {
                     currentSessionId = result.NextSessionId;
-                if (!result.Handled)
+                }
+
+                if (result.ProfileRoot is not null) {
+                    profiles = result.ProfileRoot;
+                }
+
+                if (!result.Handled) {
                     Console.WriteLine($"Unknown command: /{cmd}");
+                }
+
+                currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
+                npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
+                profile = profiles.GetRequiredProfile(npcId);
+                affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
+                statusBar.Render(npcId, profile.DisplayName, affinity, true);
                 continue;
             }
 
+            var delta = await affinityEngine.EvaluateDeltaAsync(input, profile.DisplayName, CancellationToken.None);
+            affinityEngine.ApplyDelta(affinity, profile, delta);
+            await affinityStore.SaveAsync(affinity, CancellationToken.None);
+            statusBar.Render(npcId, profile.DisplayName, affinity, true);
+
+            var roleplayState = affinityEngine.BuildRoleplayStatePrompt(npcId, profile, affinity);
+            var forcedReply = affinityEngine.MaybeGenerateBlockedReply(affinity, profile);
+
             Console.Write("AI > ");
-            await foreach (var chunk in chat.SendStreamingAsync(currentSessionId, input))
+            await foreach (var chunk in chat.SendStreamingAsync(
+                currentSessionId,
+                input,
+                new ChatRequestContext(roleplayState, forcedReply))) {
                 Console.Write(chunk);
+                statusBar.Render(npcId, profile.DisplayName, affinity);
+            }
 
             Console.WriteLine();
+            statusBar.Render(npcId, profile.DisplayName, affinity, true);
         }
     }
 
-    private static async Task<CommandResult> HandleCommandAsync(string cmd, string arg, IChatStateStore store, string currentSessionId) {
+    private static async Task<CommandResult> HandleCommandAsync(
+        string cmd,
+        string arg,
+        IChatStateStore store,
+        IAffinityStore affinityStore,
+        JsonAffinityProfileRepository profileRepository,
+        string currentSessionId,
+        AffinityEngine affinityEngine) {
+        var profiles = await profileRepository.LoadAsync();
         switch (cmd.ToLowerInvariant()) {
             case "help":
                 PrintHelp();
-                return new CommandResult(true, null);
+                return new CommandResult(true, null, profiles);
 
             case "save": {
                 var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
                 await store.SaveAsync(state, CancellationToken.None);
                 Console.WriteLine($"Saved session: {state.SessionId}");
-                return new CommandResult(true, null);
+                return new CommandResult(true, null, profiles);
             }
 
             case "load": {
                 if (string.IsNullOrWhiteSpace(arg)) {
                     Console.WriteLine("Usage: /load <sessionId>");
-                    return new CommandResult(true, null);
+                    return new CommandResult(true, null, profiles);
                 }
 
                 var loaded = await store.LoadAsync(arg.Trim(), CancellationToken.None);
+                if (string.IsNullOrWhiteSpace(loaded.NpcId)) {
+                    loaded.NpcId = profiles.DefaultNpcId;
+                    await store.SaveAsync(loaded, CancellationToken.None);
+                }
+
                 Console.WriteLine($"Loaded session: {loaded.SessionId}");
-                return new CommandResult(true, loaded.SessionId);
+                return new CommandResult(true, loaded.SessionId, profiles);
+            }
+
+            case "npc": {
+                if (string.IsNullOrWhiteSpace(arg)) {
+                    Console.WriteLine("Usage: /npc <id>");
+                    return new CommandResult(true, null, profiles);
+                }
+
+                var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
+                state.NpcId = arg.Trim();
+                await store.SaveAsync(state, CancellationToken.None);
+                var profile = profiles.GetRequiredProfile(state.NpcId);
+                await affinityEngine.LoadOrCreateAsync(state.NpcId, profile, affinityStore, CancellationToken.None);
+                Console.WriteLine($"NPC switched: {state.NpcId}");
+                return new CommandResult(true, null, profiles);
+            }
+
+            case "aff": {
+                var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
+                var npcId = string.IsNullOrWhiteSpace(state.NpcId) ? profiles.DefaultNpcId : state.NpcId;
+                var profile = profiles.GetRequiredProfile(npcId);
+                var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
+                Console.WriteLine(JsonSerializer.Serialize(affinity, new JsonSerializerOptions { WriteIndented = true }));
+                return new CommandResult(true, null, profiles);
+            }
+
+            case "set": {
+                var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length != 2 || !double.TryParse(parts[1], out var value)) {
+                    Console.WriteLine("Usage: /set <param> <value>");
+                    return new CommandResult(true, null, profiles);
+                }
+
+                var session = await store.LoadAsync(currentSessionId, CancellationToken.None);
+                var npcId = string.IsNullOrWhiteSpace(session.NpcId) ? profiles.DefaultNpcId : session.NpcId;
+                var profile = profiles.GetRequiredProfile(npcId);
+                var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
+                if (!AffinityEngine.TrySet(affinity, parts[0], value)) {
+                    Console.WriteLine("Unknown param. like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness");
+                    return new CommandResult(true, null, profiles);
+                }
+
+                affinity.UpdatedAt = DateTimeOffset.UtcNow;
+                await affinityStore.SaveAsync(affinity, CancellationToken.None);
+                Console.WriteLine($"Set {parts[0]} = {value:F1}");
+                return new CommandResult(true, null, profiles);
+            }
+
+            case "profile": {
+                var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length > 0 && string.Equals(parts[0], "reload", StringComparison.OrdinalIgnoreCase)) {
+                    var reloaded = await profileRepository.LoadAsync();
+                    Console.WriteLine("Profile reloaded.");
+                    return new CommandResult(true, null, reloaded);
+                }
+
+                Console.WriteLine("Usage: /profile reload");
+                return new CommandResult(true, null, profiles);
             }
 
             case "reset": {
@@ -154,26 +272,26 @@ SUMMARY BEHAVIORAL LINE
                 state.PreviousResponseId = null;
                 await store.SaveAsync(state, CancellationToken.None);
                 Console.WriteLine($"Reset session: {currentSessionId}");
-                return new CommandResult(true, null);
+                return new CommandResult(true, null, profiles);
             }
 
             case "persona": {
                 if (string.IsNullOrWhiteSpace(arg)) {
                     Console.WriteLine("Usage: /persona <stilla>");
-                    return new CommandResult(true, null);
+                    return new CommandResult(true, null, profiles);
                 }
 
                 var key = arg.Trim();
                 if (!PersonaPresets.TryGetValue(key, out var persona)) {
                     Console.WriteLine("Unknown persona. Available: stilla");
-                    return new CommandResult(true, null);
+                    return new CommandResult(true, null, profiles);
                 }
 
                 var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
                 state.SystemInstructions = persona;
                 await store.SaveAsync(state, CancellationToken.None);
                 Console.WriteLine($"Persona set: {key}");
-                return new CommandResult(true, null);
+                return new CommandResult(true, null, profiles);
             }
 
             case "export": {
@@ -184,7 +302,7 @@ SUMMARY BEHAVIORAL LINE
                 await File.WriteAllTextAsync(path, json);
                 Console.WriteLine($"Exported: {path}");
                 Console.WriteLine(json);
-                return new CommandResult(true, null);
+                return new CommandResult(true, null, profiles);
             }
 
             case "import": {
@@ -192,14 +310,14 @@ SUMMARY BEHAVIORAL LINE
                 if (!File.Exists(importPath)) {
                     Console.WriteLine($"Import file not found: {importPath}");
                     Console.WriteLine("Usage: /import <path-to-json> (default: import.json)");
-                    return new CommandResult(true, null);
+                    return new CommandResult(true, null, profiles);
                 }
 
                 var json = await File.ReadAllTextAsync(importPath);
                 var imported = JsonSerializer.Deserialize<ChatSessionState>(json);
                 if (imported is null) {
                     Console.WriteLine("Import failed: invalid JSON");
-                    return new CommandResult(true, null);
+                    return new CommandResult(true, null, profiles);
                 }
 
                 imported = new ChatSessionState {
@@ -207,16 +325,17 @@ SUMMARY BEHAVIORAL LINE
                     PreviousResponseId = imported.PreviousResponseId,
                     Turns = imported.Turns ?? new List<ChatTurn>(),
                     SummaryMemory = imported.SummaryMemory ?? string.Empty,
-                    SystemInstructions = imported.SystemInstructions
+                    SystemInstructions = imported.SystemInstructions,
+                    NpcId = string.IsNullOrWhiteSpace(imported.NpcId) ? profiles.DefaultNpcId : imported.NpcId
                 };
 
                 await store.SaveAsync(imported, CancellationToken.None);
                 Console.WriteLine($"Imported to session: {currentSessionId}");
-                return new CommandResult(true, null);
+                return new CommandResult(true, null, profiles);
             }
 
             default:
-                return new CommandResult(false, null);
+                return new CommandResult(false, null, profiles);
         }
     }
 
@@ -238,8 +357,43 @@ SUMMARY BEHAVIORAL LINE
     }
 
     private static void PrintHelp() {
-        Console.WriteLine("Commands: /save /load <id> /reset /persona <preset> /export /import <path> /help /exit");
+        Console.WriteLine("Commands: /save /load <id> /npc <id> /aff /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
     }
 
-    private sealed record CommandResult(bool Handled, string? NextSessionId);
+    private sealed record CommandResult(bool Handled, string? NextSessionId, AffinityProfileRoot? ProfileRoot);
+
+    private sealed class AffinityStatusBar {
+        private DateTime _lastRender = DateTime.MinValue;
+
+        public void Render(string npcId, string displayName, AffinityState state, bool force = false) {
+            if (!force && (DateTime.UtcNow - _lastRender).TotalMilliseconds < 120) {
+                return;
+            }
+
+            _lastRender = DateTime.UtcNow;
+            var text = $"NPC:{npcId}({displayName}) Like {state.Like:F1} Dislike {state.Dislike:F1} | Liked {state.Liked:F1} Disliked {state.Disliked:F1} | Love {state.Love:F1} Hate {state.Hate:F1} | Trust {state.Trust:F1} Respect {state.Respect:F1}";
+
+            if (Console.IsOutputRedirected) {
+                Console.WriteLine(text);
+                return;
+            }
+
+            try {
+                int width = Math.Max(1, Console.WindowWidth - 1);
+                int line = Math.Max(0, Console.WindowHeight - 1);
+                int curLeft = Console.CursorLeft;
+                int curTop = Console.CursorTop;
+
+                Console.SetCursorPosition(0, line);
+                Console.Write(new string(' ', width));
+                Console.SetCursorPosition(0, line);
+                Console.Write(text.Length > width ? text[..width] : text);
+                Console.SetCursorPosition(curLeft, curTop);
+            }
+            catch (ArgumentOutOfRangeException) {
+            }
+            catch (IOException) {
+            }
+        }
+    }
 }
