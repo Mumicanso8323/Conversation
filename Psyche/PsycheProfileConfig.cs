@@ -21,14 +21,14 @@ public sealed class PsycheProfileRoot {
 }
 
 public sealed class PsycheProfileConfig {
-    public Dictionary<DesireAxis, AxisProfile> Desires { get; set; } = Enum.GetValues<DesireAxis>().ToDictionary(x => x, _ => new AxisProfile());
-    public Dictionary<LibidoAxis, AxisProfile> Libido { get; set; } = Enum.GetValues<LibidoAxis>().ToDictionary(x => x, _ => new AxisProfile());
+    public Dictionary<DesireAxis, AxisProfile> Desires { get; set; } = Enum.GetValues<DesireAxis>().ToDictionary(axis => axis, axis => new AxisProfile());
+    public Dictionary<LibidoAxis, AxisProfile> Libido { get; set; } = Enum.GetValues<LibidoAxis>().ToDictionary(axis => axis, axis => new AxisProfile());
     public MoodProfile Mood { get; set; } = new();
     public PsycheDecay Decay { get; set; } = new();
     public TopKConfig K { get; set; } = new();
     public MinPromptLevelConfig MinPromptLevel { get; set; } = new();
-    public Dictionary<DesireAxis, LevelLexicon> DesireLexicon { get; set; } = Enum.GetValues<DesireAxis>().ToDictionary(x => x, _ => LevelLexicon.CreateDefault(x.ToString()));
-    public Dictionary<LibidoAxis, LevelLexicon> LibidoLexicon { get; set; } = Enum.GetValues<LibidoAxis>().ToDictionary(x => x, _ => LevelLexicon.CreateDefault(x.ToString()));
+    public Dictionary<DesireAxis, LevelLexicon> DesireLexicon { get; set; } = Enum.GetValues<DesireAxis>().ToDictionary(axis => axis, axis => LevelLexicon.CreateDefault(axis.ToString()));
+    public Dictionary<LibidoAxis, LevelLexicon> LibidoLexicon { get; set; } = Enum.GetValues<LibidoAxis>().ToDictionary(axis => axis, axis => LevelLexicon.CreateDefault(axis.ToString()));
     public MoodLexicon MoodLexicon { get; set; } = new();
     public LibidoGateConfig LibidoGate { get; set; } = new();
 
