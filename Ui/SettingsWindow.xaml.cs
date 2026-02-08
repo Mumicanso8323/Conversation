@@ -4,6 +4,7 @@ using Conversation.Affinity;
 using Conversation.Config;
 using Conversation.Psyche;
 using System.Text.Json;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -12,6 +13,12 @@ public partial class SettingsWindow : Window {
     private readonly AppSettings _settings;
     private readonly UiPreferences _prefs;
     private readonly string _npcId;
+    private readonly Action<string?>? _backgroundChanged;
+    private readonly Action<string?>? _playBgmRequested;
+    private readonly Action? _stopBgmRequested;
+    private readonly Action? _pauseBgmRequested;
+    private readonly Action<double>? _bgmVolumeChanged;
+    private readonly Action<bool>? _bgmLoopChanged;
 
     private AffinityState? _affinity;
     private PsycheState? _psyche;
@@ -19,13 +26,32 @@ public partial class SettingsWindow : Window {
     private bool _updatingAffinityControls;
     private bool _updatingPsycheControls;
     private string _selectedJsonSection = "prompts.raw";
+    private AssetLibrary _assetLibrary = new();
+    private readonly Random _random = new();
+    private bool _isUpdatingLibraryControls;
 
-    public SettingsWindow(ConversationRuntime runtime, AppSettings settings, UiPreferences prefs, string npcId) {
+    public SettingsWindow(
+        ConversationRuntime runtime,
+        AppSettings settings,
+        UiPreferences prefs,
+        string npcId,
+        Action<string?>? backgroundChanged = null,
+        Action<string?>? playBgmRequested = null,
+        Action? stopBgmRequested = null,
+        Action? pauseBgmRequested = null,
+        Action<double>? bgmVolumeChanged = null,
+        Action<bool>? bgmLoopChanged = null) {
         InitializeComponent();
         _runtime = runtime;
         _settings = settings;
         _prefs = prefs;
         _npcId = npcId;
+        _backgroundChanged = backgroundChanged;
+        _playBgmRequested = playBgmRequested;
+        _stopBgmRequested = stopBgmRequested;
+        _pauseBgmRequested = pauseBgmRequested;
+        _bgmVolumeChanged = bgmVolumeChanged;
+        _bgmLoopChanged = bgmLoopChanged;
 
         UserDisplayNameTextBox.Text = settings.UserDisplayName;
         DefaultTurnsTextBox.Text = Math.Max(1, prefs.LastTurnsToLoad).ToString();
@@ -54,7 +80,35 @@ public partial class SettingsWindow : Window {
         ShowAffinityJson();
         ShowPsycheJson();
 
+        LoadAssetLibrary();
         LoadJsonSection("prompts.raw");
+    }
+
+    private void LoadAssetLibrary() {
+        _isUpdatingLibraryControls = true;
+        try {
+            _assetLibrary = AssetScanner.Scan();
+
+            var files = _assetLibrary.BackgroundFiles.ToList();
+            files.Insert(0, "（なし）");
+            BackgroundFileCombo.ItemsSource = files;
+
+            var current = _prefs.GetBackgroundForNpc(_npcId);
+            BackgroundFileCombo.SelectedItem = files.Contains(current, StringComparer.OrdinalIgnoreCase) ? current : "（なし）";
+
+            var bgmFiles = _assetLibrary.BgmFiles.ToList();
+            bgmFiles.Insert(0, "（なし）");
+            BgmFileCombo.ItemsSource = bgmFiles;
+            BgmFileCombo.SelectedItem = bgmFiles.Contains(_prefs.CurrentBgmFile, StringComparer.OrdinalIgnoreCase) ? _prefs.CurrentBgmFile : "（なし）";
+
+            BgmVolumeSlider.Value = Math.Round(Math.Clamp(_prefs.BgmVolume, 0, 1) * 100, 0);
+            BgmVolumeText.Text = $"{BgmVolumeSlider.Value:0}%";
+            BgmLoopCheckBox.IsChecked = _prefs.BgmLoopEnabled;
+            SceneAutoSelectCheckBox.IsChecked = _prefs.SceneAutoSelectEnabled;
+        }
+        finally {
+            _isUpdatingLibraryControls = false;
+        }
     }
 
     private void SaveButton_OnClick(object sender, RoutedEventArgs e) {
@@ -68,6 +122,13 @@ public partial class SettingsWindow : Window {
         _prefs.StandeePanelWidth = int.TryParse(StandeeWidthTextBox.Text, out var width) ? Math.Clamp(width, 220, 960) : 360;
         _prefs.StandeeBackgroundDark = (StandeeThemeCombo.SelectedIndex <= 0);
 
+        var selectedFile = GetSelectedBackgroundFile();
+        _prefs.SetBackgroundForNpc(_npcId, selectedFile);
+        _prefs.CurrentBgmFile = GetSelectedBgmFile();
+        _prefs.BgmVolume = Math.Clamp(BgmVolumeSlider.Value / 100.0, 0, 1);
+        _prefs.BgmLoopEnabled = BgmLoopCheckBox.IsChecked == true;
+        _prefs.SceneAutoSelectEnabled = SceneAutoSelectCheckBox.IsChecked == true;
+
         DialogResult = true;
         Close();
     }
@@ -75,6 +136,93 @@ public partial class SettingsWindow : Window {
     private void CancelButton_OnClick(object sender, RoutedEventArgs e) {
         DialogResult = false;
         Close();
+    }
+
+
+    private string GetSelectedBackgroundFile() {
+        return BackgroundFileCombo.SelectedItem is string selected && selected != "（なし）"
+            ? selected
+            : string.Empty;
+    }
+
+    private string GetSelectedBgmFile() {
+        return BgmFileCombo.SelectedItem is string selected && selected != "（なし）"
+            ? selected
+            : string.Empty;
+    }
+
+    private void BackgroundFileCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e) {
+        if (_isUpdatingLibraryControls) return;
+
+        var selectedFile = GetSelectedBackgroundFile();
+        _prefs.SetBackgroundForNpc(_npcId, selectedFile);
+        _backgroundChanged?.Invoke(selectedFile);
+    }
+
+    private void BgmFileCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e) {
+        if (_isUpdatingLibraryControls) return;
+        _prefs.CurrentBgmFile = GetSelectedBgmFile();
+    }
+
+    private void RandomBackgroundButton_OnClick(object sender, RoutedEventArgs e) {
+        if (_assetLibrary.BackgroundFiles.Count == 0) {
+            BackgroundFileCombo.SelectedItem = "（なし）";
+            return;
+        }
+
+        var pick = _assetLibrary.BackgroundFiles[_random.Next(_assetLibrary.BackgroundFiles.Count)];
+        BackgroundFileCombo.SelectedItem = pick;
+    }
+
+    private void RandomBgmButton_OnClick(object sender, RoutedEventArgs e) {
+        if (_assetLibrary.BgmFiles.Count == 0) {
+            BgmFileCombo.SelectedItem = "（なし）";
+            return;
+        }
+
+        var pick = _assetLibrary.BgmFiles[_random.Next(_assetLibrary.BgmFiles.Count)];
+        BgmFileCombo.SelectedItem = pick;
+        _playBgmRequested?.Invoke(pick);
+    }
+
+    private void PlayBgmButton_OnClick(object sender, RoutedEventArgs e) {
+        var selected = GetSelectedBgmFile();
+        if (string.IsNullOrWhiteSpace(selected)) {
+            return;
+        }
+
+        _prefs.CurrentBgmFile = selected;
+        _playBgmRequested?.Invoke(selected);
+    }
+
+    private void PauseBgmButton_OnClick(object sender, RoutedEventArgs e) {
+        _pauseBgmRequested?.Invoke();
+    }
+
+    private void StopBgmButton_OnClick(object sender, RoutedEventArgs e) {
+        _stopBgmRequested?.Invoke();
+    }
+
+    private void BgmVolumeSlider_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) {
+        BgmVolumeText.Text = $"{Math.Round(e.NewValue):0}%";
+        if (_isUpdatingLibraryControls) return;
+
+        var volume = Math.Clamp(e.NewValue / 100.0, 0, 1);
+        _prefs.BgmVolume = volume;
+        _bgmVolumeChanged?.Invoke(volume);
+    }
+
+    private void BgmLoopCheckBox_OnChecked(object sender, RoutedEventArgs e) {
+        if (_isUpdatingLibraryControls) return;
+
+        var loop = BgmLoopCheckBox.IsChecked == true;
+        _prefs.BgmLoopEnabled = loop;
+        _bgmLoopChanged?.Invoke(loop);
+    }
+
+    private void SceneAutoSelectCheckBox_OnChecked(object sender, RoutedEventArgs e) {
+        if (_isUpdatingLibraryControls) return;
+        _prefs.SceneAutoSelectEnabled = SceneAutoSelectCheckBox.IsChecked == true;
     }
 
     private void AffinitySlider_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) {
@@ -262,6 +410,10 @@ public partial class SettingsWindow : Window {
                 JsonEditorTextBox.Text = _prompts.GetModulePrompt("standee_judge", string.Empty);
                 JsonEditorStatusText.Text = "prompts.modules.standee_judge.system_prompt を編集中";
                 break;
+            case "prompts.modules.scene_judge.system_prompt":
+                JsonEditorTextBox.Text = _prompts.GetModulePrompt("scene_judge", string.Empty);
+                JsonEditorStatusText.Text = "prompts.modules.scene_judge.system_prompt を編集中";
+                break;
             case "prompts.raw":
                 JsonEditorTextBox.Text = JsonSerializer.Serialize(_prompts, new JsonSerializerOptions { WriteIndented = true });
                 JsonEditorStatusText.Text = "prompts.json 全体（raw）";
@@ -311,6 +463,10 @@ public partial class SettingsWindow : Window {
                     break;
                 case "prompts.modules.standee_judge.system_prompt":
                     EnsureModule("standee_judge").SystemPrompt = JsonEditorTextBox.Text;
+                    await _runtime.SavePromptsAsync(_prompts);
+                    break;
+                case "prompts.modules.scene_judge.system_prompt":
+                    EnsureModule("scene_judge").SystemPrompt = JsonEditorTextBox.Text;
                     await _runtime.SavePromptsAsync(_prompts);
                     break;
                 case "prompts.raw": {

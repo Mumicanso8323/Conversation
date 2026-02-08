@@ -57,29 +57,33 @@
                 <Button Grid.Column="8" Margin="8,0,0,0" Width="100" Content="設定" Click="OpenSettingsButton_OnClick" />
             </Grid>
 
-            <ListBox Grid.Row="2" x:Name="TranscriptList" ItemsSource="{Binding Transcript}">
-                <ListBox.ItemTemplate>
-                    <DataTemplate DataType="{x:Type vm:ChatMessage}">
-                        <Grid Margin="0,0,0,8">
-                            <Border x:Name="SeparatorLine" Height="1" Background="#FFCCCCCC" VerticalAlignment="Center" Visibility="Collapsed" />
-                            <StackPanel x:Name="MessagePanel">
-                                <TextBlock x:Name="SpeakerText" Text="{Binding Speaker}" FontWeight="SemiBold" Margin="0,0,0,2" />
-                                <TextBlock x:Name="BodyText" Text="{Binding Text}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Grid>
-                        <DataTemplate.Triggers>
-                            <DataTrigger Binding="{Binding Role}" Value="system">
-                                <Setter TargetName="SpeakerText" Property="Foreground" Value="#FF7A7A7A" />
-                                <Setter TargetName="BodyText" Property="Foreground" Value="#FF7A7A7A" />
-                            </DataTrigger>
-                            <DataTrigger Binding="{Binding Role}" Value="separator">
-                                <Setter TargetName="MessagePanel" Property="Visibility" Value="Collapsed" />
-                                <Setter TargetName="SeparatorLine" Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                        </DataTemplate.Triggers>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+            <Grid Grid.Row="2">
+                <Image x:Name="ChatBackgroundImage" Stretch="UniformToFill" Opacity="0.42" IsHitTestVisible="False"/>
+                <Border Background="#B3151720" IsHitTestVisible="False"/>
+                <ListBox x:Name="TranscriptList" ItemsSource="{Binding Transcript}" Background="Transparent" BorderThickness="0">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:ChatMessage}">
+                            <Grid Margin="0,0,0,8">
+                                <Border x:Name="SeparatorLine" Height="1" Background="#FFCCCCCC" VerticalAlignment="Center" Visibility="Collapsed" />
+                                <StackPanel x:Name="MessagePanel">
+                                    <TextBlock x:Name="SpeakerText" Text="{Binding Speaker}" FontWeight="SemiBold" Margin="0,0,0,2" Foreground="#FFF4F4F7" />
+                                    <TextBlock x:Name="BodyText" Text="{Binding Text}" TextWrapping="Wrap" Foreground="#FFF4F4F7" />
+                                </StackPanel>
+                            </Grid>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding Role}" Value="system">
+                                    <Setter TargetName="SpeakerText" Property="Foreground" Value="#FFB7B7B7" />
+                                    <Setter TargetName="BodyText" Property="Foreground" Value="#FFB7B7B7" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Role}" Value="separator">
+                                    <Setter TargetName="MessagePanel" Property="Visibility" Value="Collapsed" />
+                                    <Setter TargetName="SeparatorLine" Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
 
             <Grid Grid.Row="3" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>

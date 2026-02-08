@@ -13,6 +13,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 public partial class MainWindow : Window {
@@ -21,6 +22,7 @@ public partial class MainWindow : Window {
     private readonly string _uiSettingsPath;
     private readonly UiPreferences _prefs;
     private readonly WindowTranscriptSink _sink;
+    private readonly AudioPlayer _audioPlayer = new();
 
     private CancellationTokenSource? _turnCts;
     private bool _turnInProgress;
@@ -28,6 +30,7 @@ public partial class MainWindow : Window {
     private bool _autoScrollEnabled = true;
     private string _lastAssistantMessage = string.Empty;
     private string _userDisplayName = "あなた";
+    private string _currentNpcId = "stilla";
 
     public ObservableCollection<ChatMessage> Transcript { get; } = new();
     public StandeeService Standee => _app.StandeeService;
@@ -58,6 +61,7 @@ public partial class MainWindow : Window {
 
             _userDisplayName = string.IsNullOrWhiteSpace(_runtime.Settings.UserDisplayName) ? "あなた" : _runtime.Settings.UserDisplayName.Trim();
             ApplyUiPreferencesToVisuals();
+            ApplyBgmPreferences();
 
             await _runtime.EnsureInitializedAsync(CancellationToken.None);
             await LoadSelectorsAsync();
@@ -71,6 +75,9 @@ public partial class MainWindow : Window {
                 await _runtime.SetCurrentNpcAsync(_prefs.LastNpcId, CancellationToken.None);
                 NpcCombo.SelectedItem = _prefs.LastNpcId;
             }
+
+            _currentNpcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
+            ApplyBackgroundForNpc(_currentNpcId);
 
             await ReloadTranscriptAsync();
 
@@ -98,6 +105,7 @@ public partial class MainWindow : Window {
             _prefs.LastTurnsToLoad = ParseTurnsCount();
             _prefs.AutoScrollEnabled = _autoScrollEnabled;
             await UiPreferences.SaveAsync(_uiSettingsPath, _prefs);
+            _audioPlayer.Dispose();
         }
         catch (Exception ex) {
             ReportError(ex);
@@ -109,6 +117,113 @@ public partial class MainWindow : Window {
         StandeePanel.Background = _prefs.StandeeBackgroundDark
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF1E1E24"))
             : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFF0F0F0"));
+
+        ApplyBackgroundForNpc(_currentNpcId);
+    }
+
+    private void ApplyBackgroundForNpc(string npcId) {
+        var file = _prefs.GetBackgroundForNpc(npcId);
+        SetBackgroundImage(file);
+    }
+
+    private void SetBackgroundImage(string backgroundFile) {
+        ChatBackgroundImage.Source = null;
+
+        var path = ResolveBackgroundPath(backgroundFile);
+        if (string.IsNullOrWhiteSpace(path)) {
+            return;
+        }
+
+        try {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(path, UriKind.Absolute);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            ChatBackgroundImage.Source = bitmap;
+        }
+        catch {
+            ChatBackgroundImage.Source = null;
+        }
+    }
+
+    private static string ResolveBackgroundPath(string backgroundFile) {
+        if (string.IsNullOrWhiteSpace(backgroundFile)) {
+            return string.Empty;
+        }
+
+        var dataPath = Path.Combine(AppPaths.DataAssetsDir, "background", backgroundFile);
+        if (File.Exists(dataPath)) {
+            return dataPath;
+        }
+
+        var basePath = Path.Combine(AppPaths.BaseAssetsDir, "background", backgroundFile);
+        return File.Exists(basePath) ? basePath : string.Empty;
+    }
+
+    private void ApplyBgmPreferences() {
+        _audioPlayer.Volume = Math.Clamp(_prefs.BgmVolume, 0, 1);
+        _audioPlayer.LoopEnabled = _prefs.BgmLoopEnabled;
+        PlayCurrentBgmIfPossible();
+    }
+
+    private void PlayCurrentBgmIfPossible() {
+        if (_prefs.BgmVolume <= 0 || string.IsNullOrWhiteSpace(_prefs.CurrentBgmFile)) {
+            _audioPlayer.Stop();
+            return;
+        }
+
+        var path = ResolveBgmPath(_prefs.CurrentBgmFile);
+        if (string.IsNullOrWhiteSpace(path)) {
+            _audioPlayer.Stop();
+            return;
+        }
+
+        _audioPlayer.Play(path);
+    }
+
+    private static string ResolveBgmPath(string bgmFile) {
+        if (string.IsNullOrWhiteSpace(bgmFile)) {
+            return string.Empty;
+        }
+
+        var dataPath = Path.Combine(AppPaths.DataAssetsDir, "bgm", bgmFile);
+        if (File.Exists(dataPath)) {
+            return dataPath;
+        }
+
+        var basePath = Path.Combine(AppPaths.BaseAssetsDir, "bgm", bgmFile);
+        return File.Exists(basePath) ? basePath : string.Empty;
+    }
+
+    private void PlayBgm(string bgmFile) {
+        _prefs.CurrentBgmFile = bgmFile ?? string.Empty;
+        PlayCurrentBgmIfPossible();
+    }
+
+    private void StopBgm() {
+        _audioPlayer.Stop();
+    }
+
+    private void PauseBgm() {
+        _audioPlayer.Pause();
+    }
+
+    private async Task ApplyAutoSceneSelectionAsync(string userInput) {
+        if (!_prefs.SceneAutoSelectEnabled || string.IsNullOrWhiteSpace(userInput) || userInput.StartsWith('/')) {
+            return;
+        }
+
+        var judged = await _runtime.RecommendSceneAsync(userInput, CancellationToken.None);
+        if (judged.HasBackgroundChange) {
+            _prefs.SetBackgroundForNpc(_currentNpcId, judged.Background);
+            ApplyBackgroundForNpc(_currentNpcId);
+        }
+
+        if (judged.HasBgmChange) {
+            PlayBgm(judged.Bgm);
+        }
     }
 
     private async Task RefreshConfigurationStateAsync() {
@@ -178,6 +293,8 @@ public partial class MainWindow : Window {
             }
 
             await LoadSelectorsAsync();
+            _currentNpcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
+            await ApplyAutoSceneSelectionAsync(input);
             SessionCombo.SelectedItem = _runtime.CurrentSessionId;
         }
         catch (OperationCanceledException) {
@@ -222,6 +339,8 @@ public partial class MainWindow : Window {
 
         try {
             await _runtime.SetCurrentNpcAsync(npcId, CancellationToken.None);
+            _currentNpcId = npcId;
+            ApplyBackgroundForNpc(_currentNpcId);
             _sink.AppendSystemLine($"キャラクターを切り替えました: {npcId}");
         }
         catch (Exception ex) {
@@ -252,7 +371,36 @@ public partial class MainWindow : Window {
     private async void OpenSettingsButton_OnClick(object sender, RoutedEventArgs e) {
         try {
             var npcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
-            var settingsWindow = new SettingsWindow(_runtime, _runtime.Settings, _prefs, npcId) {
+            var settingsWindow = new SettingsWindow(
+                _runtime,
+                _runtime.Settings,
+                _prefs,
+                npcId,
+                selectedBackground => {
+                    _prefs.SetBackgroundForNpc(npcId, selectedBackground ?? string.Empty);
+                    ApplyBackgroundForNpc(npcId);
+                },
+                selectedBgm => {
+                    if (!string.IsNullOrWhiteSpace(selectedBgm)) {
+                        PlayBgm(selectedBgm);
+                    }
+                },
+                () => StopBgm(),
+                () => PauseBgm(),
+                volume => {
+                    _prefs.BgmVolume = Math.Clamp(volume, 0, 1);
+                    _audioPlayer.Volume = _prefs.BgmVolume;
+                    if (_prefs.BgmVolume <= 0) {
+                        _audioPlayer.Stop();
+                    }
+                    else if (!string.IsNullOrWhiteSpace(_prefs.CurrentBgmFile)) {
+                        PlayCurrentBgmIfPossible();
+                    }
+                },
+                loopEnabled => {
+                    _prefs.BgmLoopEnabled = loopEnabled;
+                    _audioPlayer.LoopEnabled = loopEnabled;
+                }) {
                 Owner = this,
             };
 
@@ -263,10 +411,13 @@ public partial class MainWindow : Window {
             _runtime.SaveSettings();
             await UiPreferences.SaveAsync(_uiSettingsPath, _prefs);
 
+            _currentNpcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
+
             _userDisplayName = string.IsNullOrWhiteSpace(_runtime.Settings.UserDisplayName) ? "あなた" : _runtime.Settings.UserDisplayName.Trim();
             _autoScrollEnabled = _prefs.AutoScrollEnabled;
             TurnsTextBox.Text = Math.Max(1, _prefs.LastTurnsToLoad).ToString();
             ApplyUiPreferencesToVisuals();
+            ApplyBgmPreferences();
 
             _app.StandeeService.ApplyRuntimeSettings(_runtime.Settings);
             if (_runtime.Settings.Standee.Enabled) {

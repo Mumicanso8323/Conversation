@@ -130,6 +130,17 @@ Schema:
 Allowed filenames: [{allowed}]
 If uncertain, choose "{default}".
 """
+                },
+                ["scene_judge"] = new ModulePrompt {
+                    SystemPrompt = """
+You are a strict JSON scene selector.
+Return EXACTLY one JSON object and no extra text.
+Schema:
+{"bgm":"<filename-or-empty>","background":"<filename-or-empty>"}
+Allowed bgm filenames: [{allowed_bgm}]
+Allowed background filenames: [{allowed_background}]
+If uncertain, use empty strings to indicate no change.
+"""
                 }
             }
         };
