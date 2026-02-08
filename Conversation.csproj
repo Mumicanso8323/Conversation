@@ -15,6 +15,11 @@
     <None Remove=".gitattributes" />
     <None Remove=".gitignore" />
     <None Remove="Conversation.zip" />
+    <ApplicationDefinition Remove="StandeeViewer/**/*.xaml" />
+    <Page Remove="StandeeViewer/**/*.xaml" />
+    <Compile Remove="StandeeViewer/**/*.cs" />
+    <EmbeddedResource Remove="StandeeViewer/**/*.resx" />
+    <None Remove="StandeeViewer/**" />
   </ItemGroup>
 
   <ItemGroup>
