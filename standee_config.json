@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "monitorIndex": 1,
+  "pipeName": "conversation-standee",
+  "alwaysOnTop": true,
+  "window": {
+    "x": 100,
+    "y": 100,
+    "width": 512,
+    "height": 768,
+    "scale": 1.0
+  }
+}

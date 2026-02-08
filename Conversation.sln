@@ -5,6 +5,8 @@ VisualStudioVersion = 17.14.36915.13 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Conversation", "Conversation.csproj", "{D0DD68BD-208C-420B-89F7-2CDF87226724}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StandeeViewer", "StandeeViewer\StandeeViewer.csproj", "{DCF400D3-D8BE-433D-A575-0B77AA44D523}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{D0DD68BD-208C-420B-89F7-2CDF87226724}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D0DD68BD-208C-420B-89F7-2CDF87226724}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D0DD68BD-208C-420B-89F7-2CDF87226724}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DCF400D3-D8BE-433D-A575-0B77AA44D523}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DCF400D3-D8BE-433D-A575-0B77AA44D523}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DCF400D3-D8BE-433D-A575-0B77AA44D523}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DCF400D3-D8BE-433D-A575-0B77AA44D523}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

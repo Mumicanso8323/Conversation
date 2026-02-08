@@ -19,4 +19,13 @@
     <PackageReference Include="OpenAI" Version="2.8.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="standee_config.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="assets/standee/**/*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
