@@ -28,5 +28,14 @@ public sealed class JsonFileAffinityStore : IAffinityStore {
         await JsonSerializer.SerializeAsync(stream, state, _options, ct);
     }
 
+    internal async Task DeleteAsync(string npcId, CancellationToken ct) {
+        string filePath = GetPath(npcId);
+        if (File.Exists(filePath)) {
+            await Task.Run(() => File.Delete(filePath), ct);
+        } else {
+            throw new FileNotFoundException($"NPC with ID '{npcId}' not found.");
+        }
+    }
+
     private string GetPath(string npcId) => Path.Combine(_directory, $"{npcId}.json");
 }
