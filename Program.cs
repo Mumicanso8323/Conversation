@@ -120,9 +120,7 @@ class Program {
             var npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
             var profile = profiles.GetRequiredProfile(npcId);
             var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
-            statusBar.Render(npcId, profile.DisplayName, affinity);
-
-            consoleUi.WriteLog($"\n[{currentSessionId}/{npcId}] YOU> ");
+            consoleUi.WriteLogLine($"[{currentSessionId}/{npcId}] YOU>");
             var input = Console.ReadLine();
             if (input is null) break;
 
@@ -158,16 +156,11 @@ class Program {
             var roleplayState = affinityEngine.BuildRoleplayStatePrompt(npcId, profile, affinity);
             var forcedReply = affinityEngine.MaybeGenerateBlockedReply(affinity, profile);
 
-            consoleUi.WriteLog("AI > ");
-            await foreach (var chunk in chat.SendStreamingAsync(
+            var response = await chat.SendAsync(
                 currentSessionId,
                 input,
-                new ChatRequestContext(roleplayState, forcedReply))) {
-                consoleUi.WriteLogChunk(chunk);
-                statusBar.Render(npcId, profile.DisplayName, affinity);
-            }
-
-            consoleUi.WriteLogLine(string.Empty);
+                new ChatRequestContext(roleplayState, forcedReply));
+            consoleUi.WriteLogLine($"AI > {response}");
             statusBar.Render(npcId, profile.DisplayName, affinity, true);
         }
     }
@@ -367,274 +360,32 @@ class Program {
 
     private sealed class AffinityStatusBar {
         private readonly ConsoleUi _consoleUi;
-        private DateTime _lastRender = DateTime.MinValue;
 
         public AffinityStatusBar(ConsoleUi consoleUi) {
             _consoleUi = consoleUi;
         }
 
         public void Render(string npcId, string displayName, AffinityState state, bool force = false) {
-            if (!force && (DateTime.UtcNow - _lastRender).TotalMilliseconds < 120) {
-                return;
-            }
-
-            _lastRender = DateTime.UtcNow;
             var text = $"NPC:{npcId}({displayName}) Like {state.Like:F1} Dislike {state.Dislike:F1} | Liked {state.Liked:F1} Disliked {state.Disliked:F1} | Love {state.Love:F1} Hate {state.Hate:F1} | Trust {state.Trust:F1} Respect {state.Respect:F1}";
-            _consoleUi.SetStatus(text, force);
+            _consoleUi.WriteLogLine(text);
         }
     }
 
-    private sealed partial class ConsoleUi {
-        private const string Esc = "\u001b";
+    private sealed class ConsoleUi {
         private readonly object _gate = new();
-        private readonly bool _useAnsiStatus;
-        private string _statusText = string.Empty;
-        private int _lastWidth = -1;
-        private int _lastHeight = -1;
-
-        public ConsoleUi() {
-            _useAnsiStatus = !Console.IsOutputRedirected && TryEnableAnsiStatus();
-        }
-
-        public void SetStatus(string text, bool force = false) {
-            lock (_gate) {
-            if (Console.IsOutputRedirected) {
-                if (force) {
-                    Console.WriteLine(text);
-                }
-
-                _statusText = text;
-                return;
-            }
-
-            EnsureLayout();
-            if (!force && string.Equals(_statusText, text, StringComparison.Ordinal)) {
-                return;
-            }
-
-            _statusText = text;
-            RenderStatusLine();
-            }
-        }
 
         public void WriteLog(string text) {
-            WriteInternal(text, appendNewLine: false);
+            WriteLogLine(text);
         }
 
         public void WriteLogLine(string text) {
-            WriteInternal(text, appendNewLine: true);
+            lock (_gate) {
+                Console.WriteLine(text);
+            }
         }
 
         public void WriteLogChunk(string chunk) {
-            WriteInternal(chunk, appendNewLine: false);
+            WriteLogLine(chunk);
         }
-
-        private void WriteInternal(string text, bool appendNewLine) {
-            lock (_gate) {
-            if (Console.IsOutputRedirected) {
-                if (appendNewLine) {
-                    Console.WriteLine(text);
-                }
-                else {
-                    Console.Write(text);
-                }
-
-                return;
-            }
-
-            EnsureLayout();
-            EnsureCursorInLogArea();
-
-            WriteLogText(text);
-
-            if (appendNewLine) {
-                WriteNewLine();
-            }
-
-            EnsureCursorInLogArea();
-            RenderStatusLine();
-            }
-        }
-
-        private void WriteLogText(string text) {
-            if (string.IsNullOrEmpty(text)) {
-                return;
-            }
-
-            int i = 0;
-            while (i < text.Length) {
-                int newLineIndex = text.IndexOf('\n', i);
-                bool hasNewLine = newLineIndex >= 0;
-                string segment = hasNewLine ? text[i..newLineIndex] : text[i..];
-
-                if (segment.Length > 0) {
-                    if (segment[^1] == '\r') {
-                        segment = segment[..^1];
-                    }
-
-                    WriteSegment(segment);
-                }
-
-                if (!hasNewLine) {
-                    break;
-                }
-
-                WriteNewLine();
-                i = newLineIndex + 1;
-            }
-        }
-
-        private void WriteSegment(string segment) {
-            int offset = 0;
-            while (offset < segment.Length) {
-                EnsureCursorInLogArea();
-                int width = Math.Max(1, Console.WindowWidth);
-                int available = Math.Max(1, width - Console.CursorLeft);
-                int remaining = segment.Length - offset;
-                int take = Math.Min(available, remaining);
-                Console.Write(segment.Substring(offset, take));
-                offset += take;
-
-                if (offset < segment.Length) {
-                    if (Console.CursorTop >= LogBottom) {
-                        ScrollLogArea();
-                    }
-                    else {
-                        SafeSetCursor(0, Console.CursorTop + 1);
-                    }
-                }
-            }
-        }
-
-        private void WriteNewLine() {
-            if (Console.CursorTop >= LogBottom) {
-                ScrollLogArea();
-                return;
-            }
-
-            Console.WriteLine();
-            EnsureCursorInLogArea();
-        }
-
-        private void ScrollLogArea() {
-            SafeSetCursor(0, LogBottom);
-            Console.WriteLine();
-            SafeSetCursor(0, LogBottom);
-        }
-
-        private void EnsureLayout() {
-            if (Console.IsOutputRedirected) {
-                return;
-            }
-
-            int width = Math.Max(1, Console.WindowWidth);
-            int height = Math.Max(1, Console.WindowHeight);
-            if (width == _lastWidth && height == _lastHeight) {
-                return;
-            }
-
-            _lastWidth = width;
-            _lastHeight = height;
-            EnsureCursorInLogArea();
-            RenderStatusLine();
-        }
-
-        private void EnsureCursorInLogArea() {
-            int left = Math.Clamp(Console.CursorLeft, 0, Math.Max(0, Console.WindowWidth - 1));
-            int top = Math.Clamp(Console.CursorTop, 0, LogBottom);
-            SafeSetCursor(left, top);
-        }
-
-        private void RenderStatusLine() {
-            if (Console.IsOutputRedirected) {
-                return;
-            }
-
-            string fitted = FitStatusText();
-            if (_useAnsiStatus) {
-                int bottomRow = Math.Max(1, Console.WindowHeight);
-                Console.Write($"{Esc}[s{Esc}[{bottomRow};1H{Esc}[2K");
-                Console.Write(fitted);
-                Console.Write($"{Esc}[u");
-                return;
-            }
-
-            int curLeft = Console.CursorLeft;
-            int curTop = Console.CursorTop;
-            int restoreTop = Math.Clamp(curTop, 0, LogBottom);
-            int restoreLeft = Math.Clamp(curLeft, 0, Math.Max(0, Math.Max(1, Console.WindowWidth) - 1));
-
-            SafeSetCursor(0, StatusLine);
-            int effectiveWidth = Math.Max(0, Math.Max(1, Console.WindowWidth) - 1);
-            if (effectiveWidth > 0) {
-                Console.Write(new string(' ', effectiveWidth));
-                SafeSetCursor(0, StatusLine);
-                Console.Write(fitted);
-            }
-
-            SafeSetCursor(restoreLeft, restoreTop);
-        }
-
-        private string FitStatusText() {
-            int effectiveWidth = Math.Max(0, Math.Max(1, Console.WindowWidth) - 1);
-            string normalized = (_statusText ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
-            if (effectiveWidth == 0) {
-                return string.Empty;
-            }
-
-            return normalized.Length > effectiveWidth
-                ? normalized[..effectiveWidth]
-                : normalized.PadRight(effectiveWidth);
-        }
-
-        private int StatusLine => Math.Max(0, Console.WindowHeight - 1);
-
-        private int LogBottom => Math.Max(0, Console.WindowHeight - 2);
-
-        private static void SafeSetCursor(int left, int top) {
-            try {
-                Console.SetCursorPosition(left, top);
-            }
-            catch (ArgumentOutOfRangeException) {
-            }
-            catch (IOException) {
-            }
-        }
-
-        private static bool TryEnableAnsiStatus() {
-            if (!OperatingSystem.IsWindows()) {
-                return true;
-            }
-
-            const int stdOutputHandle = -11;
-            const uint enableVirtualTerminalProcessing = 0x0004;
-
-            var handle = GetStdHandle(stdOutputHandle);
-            if (handle == IntPtr.Zero || handle == new IntPtr(-1)) {
-                return false;
-            }
-
-            uint mode = 0;
-            if (!GetConsoleMode(handle, out mode)) {
-                return false;
-            }
-
-            if ((mode & enableVirtualTerminalProcessing) != 0) {
-                return true;
-            }
-
-            return SetConsoleMode(handle, mode | enableVirtualTerminalProcessing);
-        }
-
-        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr GetStdHandle(int nStdHandle);
-
-        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-        private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
-
-        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-        private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
     }
 }
