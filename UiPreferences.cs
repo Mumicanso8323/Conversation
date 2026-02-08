@@ -11,6 +11,9 @@ public sealed class UiPreferences {
     public string LastSessionId { get; set; } = "stilla";
     public string LastNpcId { get; set; } = "stilla";
     public int LastTurnsToLoad { get; set; } = 20;
+    public bool AutoScrollEnabled { get; set; } = true;
+    public double StandeePanelWidth { get; set; } = 360;
+    public bool StandeeBackgroundDark { get; set; } = true;
 
     public static UiPreferences Load(string path) {
         try {

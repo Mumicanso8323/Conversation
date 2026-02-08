@@ -1,5 +1,7 @@
 namespace Conversation.Standee;
 
+using System.IO;
+
 public static class StandeeSprites {
     public static readonly string Default = "普通.png";
 
@@ -18,4 +20,26 @@ public static class StandeeSprites {
 
     public static string NormalizeOrDefault(string? fileName)
         => fileName is not null && IsAllowed(fileName) ? fileName : Default;
+
+    public static IReadOnlyList<string> GetAvailableSprites(string assetsDir) {
+        try {
+            if (Directory.Exists(assetsDir)) {
+                var scanned = Directory.EnumerateFiles(assetsDir, "*.png", SearchOption.TopDirectoryOnly)
+                    .Select(Path.GetFileName)
+                    .Where(static fileName => !string.IsNullOrWhiteSpace(fileName))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(static fileName => fileName, StringComparer.Ordinal)
+                    .ToArray();
+
+                if (scanned.Length > 0) {
+                    return scanned!;
+                }
+            }
+        }
+        catch {
+            // ignore and fall back to existing static list
+        }
+
+        return Allowed;
+    }
 }

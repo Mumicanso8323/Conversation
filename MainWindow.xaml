@@ -1,80 +1,111 @@
 <Window x:Class="Conversation.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Conversation" Height="760" Width="1120">
+        xmlns:vm="clr-namespace:Conversation.ViewModels"
+        Title="会話" Height="760" Width="1120">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+    </Window.Resources>
+
     <Grid Margin="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition x:Name="StandeeColumn" Width="360" />
+        </Grid.ColumnDefinitions>
 
-        <Border x:Name="ConfigBanner" Grid.Row="0" Background="#FFFBE6" BorderBrush="#FFE58F" BorderThickness="1" Padding="8" Visibility="Collapsed" Margin="0,0,0,8">
-            <TextBlock x:Name="ConfigBannerText" TextWrapping="Wrap"/>
-        </Border>
+        <Grid Grid.Column="0" Margin="0,0,12,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-        <Expander Grid.Row="1" Header="Controls / Settings" IsExpanded="True" Margin="0,0,0,8">
-            <Grid Margin="0,8,0,0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
+            <Border x:Name="ConfigBanner" Grid.Row="0" Background="#FFFBE6" BorderBrush="#FFE58F" BorderThickness="1" Padding="8" Visibility="Collapsed" Margin="0,0,0,8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="ConfigBannerText" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                    <Button x:Name="OpenSettingsFromBannerButton" Grid.Column="1" Margin="12,0,0,0" Content="設定を開く" Click="OpenSettingsButton_OnClick"/>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1" Margin="0,0,0,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="180" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="200" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="120" />
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0" Text="Session" />
-                <ComboBox x:Name="SessionCombo" Grid.Row="0" Grid.Column="1" SelectionChanged="SessionCombo_OnSelectionChanged" />
-                <Button Grid.Row="0" Grid.Column="2" Margin="8,0,10,0" Width="80" Content="Refresh" Click="RefreshSessionButton_OnClick" />
-                <TextBlock Grid.Row="0" Grid.Column="3" VerticalAlignment="Center" Margin="0,0,6,0" Text="NPC" />
-                <ComboBox x:Name="NpcCombo" Grid.Row="0" Grid.Column="4" Width="180" SelectionChanged="NpcCombo_OnSelectionChanged" />
-                <TextBlock Grid.Row="0" Grid.Column="5" VerticalAlignment="Center" Margin="12,0,6,0" Text="Turns" />
-                <TextBox x:Name="TurnsTextBox" Grid.Row="0" Grid.Column="6" Width="50" Text="20" VerticalContentAlignment="Center" />
-                <Button Grid.Row="0" Grid.Column="7" HorizontalAlignment="Left" Margin="12,0,0,0" Width="120" Content="Reload Transcript" Click="ReloadTranscriptButton_OnClick" />
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0" Text="セッション" />
+                <ComboBox x:Name="SessionCombo" Grid.Column="1" SelectionChanged="SessionCombo_OnSelectionChanged" />
+                <Button Grid.Column="2" Margin="8,0,10,0" Width="80" Content="更新" Click="RefreshSessionButton_OnClick" />
+                <TextBlock Grid.Column="3" VerticalAlignment="Center" Margin="0,0,6,0" Text="キャラクター" />
+                <ComboBox x:Name="NpcCombo" Grid.Column="4" Width="180" SelectionChanged="NpcCombo_OnSelectionChanged" />
+                <TextBlock Grid.Column="5" VerticalAlignment="Center" Margin="12,0,6,0" Text="表示件数" />
+                <TextBox x:Name="TurnsTextBox" Grid.Column="6" Width="50" Text="20" VerticalContentAlignment="Center" />
+                <Button Grid.Column="7" Margin="8,0,0,0" Width="120" Content="ログ再読込" Click="ReloadTranscriptButton_OnClick" />
+                <Button Grid.Column="8" Margin="8,0,0,0" Width="100" Content="設定" Click="OpenSettingsButton_OnClick" />
+            </Grid>
 
-                <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,8,6,0" Text="Main model" />
-                <TextBox x:Name="MainModelTextBox" Grid.Row="1" Grid.Column="1" Margin="0,8,0,0" />
-                <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Margin="8,8,6,0" Text="Standee model" />
-                <TextBox x:Name="StandeeModelTextBox" Grid.Row="1" Grid.Column="3" Margin="0,8,0,0" />
-                <CheckBox x:Name="StandeeEnabledCheckBox" Grid.Row="1" Grid.Column="4" Margin="0,8,0,0" VerticalAlignment="Center" Content="Standee enabled" />
-                <TextBlock Grid.Row="1" Grid.Column="5" VerticalAlignment="Center" Margin="12,8,6,0" Text="Monitor" />
-                <TextBox x:Name="StandeeMonitorTextBox" Grid.Row="1" Grid.Column="6" Margin="0,8,0,0" Width="50" VerticalContentAlignment="Center" />
-                <StackPanel Grid.Row="1" Grid.Column="7" Orientation="Horizontal" Margin="12,8,0,0">
-                    <Button Width="120" Content="Save Settings" Click="SaveSettingsButton_OnClick" />
-                    <TextBlock Margin="12,4,0,0" VerticalAlignment="Center" Text="API key: set OPENAI_API_KEY environment variable." />
+            <ListBox Grid.Row="2" x:Name="TranscriptList" ItemsSource="{Binding Transcript}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:ChatMessage}">
+                        <Grid Margin="0,0,0,8">
+                            <Border x:Name="SeparatorLine" Height="1" Background="#FFCCCCCC" VerticalAlignment="Center" Visibility="Collapsed" />
+                            <StackPanel x:Name="MessagePanel">
+                                <TextBlock x:Name="SpeakerText" Text="{Binding Speaker}" FontWeight="SemiBold" Margin="0,0,0,2" />
+                                <TextBlock x:Name="BodyText" Text="{Binding Text}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Role}" Value="system">
+                                <Setter TargetName="SpeakerText" Property="Foreground" Value="#FF7A7A7A" />
+                                <Setter TargetName="BodyText" Property="Foreground" Value="#FF7A7A7A" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Role}" Value="separator">
+                                <Setter TargetName="MessagePanel" Property="Visibility" Value="Collapsed" />
+                                <Setter TargetName="SeparatorLine" Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Grid Grid.Row="3" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="InputBox" Grid.Column="0" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70"
+                         VerticalScrollBarVisibility="Auto" KeyDown="InputBox_OnKeyDown" />
+                <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                    <Button x:Name="SendButton" Width="125" Height="30" Content="送信" Click="SendButton_OnClick" />
+                    <Button x:Name="CancelButton" Width="125" Height="30" Margin="0,8,0,0" Content="キャンセル" Click="CancelButton_OnClick" IsEnabled="False" />
+                    <Button Width="125" Height="30" Margin="0,8,0,0" Content="直近AIをコピー" Click="CopyLastAssistantButton_OnClick" />
+                    <Button Width="125" Height="30" Margin="0,8,0,0" Content="表示クリア" Click="ClearUiButton_OnClick" />
                 </StackPanel>
             </Grid>
-        </Expander>
-
-        <ListBox Grid.Row="2" x:Name="TranscriptList" ItemsSource="{Binding Transcript}">
-            <ListBox.ItemTemplate>
-                <DataTemplate>
-                    <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
-
-        <Grid Grid.Row="3" Margin="0,8,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBox x:Name="InputBox" Grid.Column="0" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70"
-                     VerticalScrollBarVisibility="Auto" KeyDown="InputBox_OnKeyDown" />
-            <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                <Button x:Name="SendButton" Width="125" Height="30" Content="Send" Click="SendButton_OnClick" />
-                <Button x:Name="CancelButton" Width="125" Height="30" Margin="0,8,0,0" Content="Cancel" Click="CancelButton_OnClick" IsEnabled="False" />
-                <Button Width="125" Height="30" Margin="0,8,0,0" Content="Copy Last AI" Click="CopyLastAssistantButton_OnClick" />
-                <Button Width="125" Height="30" Margin="0,8,0,0" Content="Clear UI" Click="ClearUiButton_OnClick" />
-            </StackPanel>
         </Grid>
+
+        <Border x:Name="StandeePanel"
+                Grid.Column="1"
+                Background="#FF1E1E24"
+                CornerRadius="8"
+                Padding="8"
+                Visibility="{Binding Standee.StandeeVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+            <Grid>
+                <Image Stretch="Uniform" Source="{Binding Standee.CurrentBitmapImage}" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>

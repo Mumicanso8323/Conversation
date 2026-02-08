@@ -25,7 +25,8 @@ public sealed record ChatModuleOptions(
     bool Streaming = true,
     int MaxToolCallRounds = 8,
     int SummaryTriggerTurns = 24,
-    int KeepLastTurns = 12
+    int KeepLastTurns = 12,
+    Func<string?, string?>? PersonaSystemResolver = null
 );
 
 public sealed record ChatRequestContext(
@@ -45,6 +46,7 @@ public sealed class ChatSessionState {
     public List<ChatTurn> Turns { get; set; } = new();
     public string SummaryMemory { get; set; } = string.Empty;
     public string? SystemInstructions { get; set; }
+    public string? PersonaId { get; set; }
     public string NpcId { get; set; } = "default";
 }
 
@@ -98,6 +100,7 @@ public sealed class JsonFileChatStateStore : IChatStateStore {
                 Turns = state.Turns ?? new List<ChatTurn>(),
                 SummaryMemory = state.SummaryMemory ?? string.Empty,
                 SystemInstructions = state.SystemInstructions,
+                PersonaId = state.PersonaId,
                 NpcId = string.IsNullOrWhiteSpace(state.NpcId) ? "default" : state.NpcId
             };
             return state;
@@ -256,7 +259,7 @@ public sealed class UniversalChatModule {
             StreamingEnabled = false,
         };
 
-        var systemInstructions = state.SystemInstructions ?? _opt.SystemInstructions;
+        var systemInstructions = ResolveSystemInstructions(state);
         var fullInstructions = string.IsNullOrWhiteSpace(context?.AdditionalSystemMessage)
             ? systemInstructions
             : $"{systemInstructions}\n{context!.AdditionalSystemMessage}";
@@ -408,7 +411,7 @@ public sealed class UniversalChatModule {
 
     private List<ChatMessage> BuildMessagesForModel(ChatSessionState state, string userText, ChatRequestContext? context) {
         var messages = new List<ChatMessage>();
-        var systemInstructions = state.SystemInstructions ?? _opt.SystemInstructions;
+        var systemInstructions = ResolveSystemInstructions(state);
 
         if (!string.IsNullOrWhiteSpace(systemInstructions))
             messages.Add(new SystemChatMessage(systemInstructions));
@@ -425,6 +428,16 @@ public sealed class UniversalChatModule {
 
         messages.Add(new UserChatMessage(userText));
         return messages;
+    }
+
+
+    private string? ResolveSystemInstructions(ChatSessionState state) {
+        var fromPersona = _opt.PersonaSystemResolver?.Invoke(state.PersonaId);
+        if (!string.IsNullOrWhiteSpace(fromPersona)) {
+            return fromPersona;
+        }
+
+        return state.SystemInstructions ?? _opt.SystemInstructions;
     }
 
     private async Task MaybeSummarizeAsync(ChatSessionState state, CancellationToken ct) {

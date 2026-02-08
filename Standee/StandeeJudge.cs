@@ -4,23 +4,36 @@ using OpenAI.Chat;
 namespace Conversation.Standee;
 
 public sealed class StandeeJudge {
-    private readonly ChatClient _chatClient;
-
-    public StandeeJudge(string model, string apiKey) {
-        _chatClient = new ChatClient(model, apiKey);
-    }
-
-    public async Task<string> EvaluateAsync(string userText, string npcName, string recentContext, string narratedState, CancellationToken ct) {
-        var allowed = string.Join(", ", StandeeSprites.Allowed.Select(x => $"\"{x}\""));
-        var messages = new List<ChatMessage> {
-            new SystemChatMessage($$"""
+    private const string DefaultTemplate = """
 You are a strict JSON sprite selector.
 Return EXACTLY one JSON object and no extra text.
 Schema:
 {"sprite":"<filename>"}
-Allowed filenames: [{{allowed}}]
-If uncertain, choose "{{StandeeSprites.Default}}".
-"""),
+Allowed filenames: [{allowed}]
+If uncertain, choose "{default}".
+""";
+
+    private readonly ChatClient _chatClient;
+    private readonly Func<string>? _systemPromptTemplateProvider;
+
+    public StandeeJudge(string model, string apiKey, Func<string>? systemPromptTemplateProvider = null) {
+        _chatClient = new ChatClient(model, apiKey);
+        _systemPromptTemplateProvider = systemPromptTemplateProvider;
+    }
+
+    public async Task<string> EvaluateAsync(string userText, string npcName, string recentContext, string narratedState, CancellationToken ct) {
+        var allowed = string.Join(", ", StandeeSprites.Allowed.Select(x => $"\"{x}\""));
+        var template = _systemPromptTemplateProvider?.Invoke();
+        if (string.IsNullOrWhiteSpace(template)) {
+            template = DefaultTemplate;
+        }
+
+        var systemPrompt = template
+            .Replace("{allowed}", allowed, StringComparison.Ordinal)
+            .Replace("{default}", StandeeSprites.Default, StringComparison.Ordinal);
+
+        var messages = new List<ChatMessage> {
+            new SystemChatMessage(systemPrompt),
             new UserChatMessage($"NPC: {npcName}\nUser input: {userText}\nRecent context:\n{recentContext}\n\nNarrated state:\n{narratedState}")
         };
 
