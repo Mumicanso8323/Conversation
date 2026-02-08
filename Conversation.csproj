@@ -1,13 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <StartupObject>Conversation.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,12 +27,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="standee_config.json">
+    <Content Include="standee_config.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="assets/standee/**/*.png">
+    </Content>
+    <Content Include="assets/standee/**/*.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    </Content>
   </ItemGroup>
 
 </Project>

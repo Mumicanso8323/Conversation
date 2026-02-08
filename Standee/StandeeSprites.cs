@@ -1,9 +1,9 @@
 namespace Conversation.Standee;
 
 public static class StandeeSprites {
-    public const string Default = "普通.png";
+    public static readonly string Default = "普通.png";
 
-    public static readonly HashSet<string> Allowed = new(StringComparer.Ordinal) {
+    public static readonly IReadOnlyList<string> Allowed = new[] {
         "普通.png",
         "笑顔.png",
         "期待、心躍る.png",
@@ -13,12 +13,9 @@ public static class StandeeSprites {
         "不穏な笑み、たくらみ.png"
     };
 
-    public static string Normalize(string? sprite) {
-        if (string.IsNullOrWhiteSpace(sprite)) {
-            return Default;
-        }
+    public static bool IsAllowed(string fileName)
+        => Allowed.Contains(fileName, StringComparer.Ordinal);
 
-        var trimmed = sprite.Trim();
-        return Allowed.Contains(trimmed) ? trimmed : Default;
-    }
+    public static string NormalizeOrDefault(string? fileName)
+        => fileName is not null && IsAllowed(fileName) ? fileName : Default;
 }

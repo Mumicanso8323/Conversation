@@ -1,13 +1,13 @@
 {
   "enabled": true,
-  "monitorIndex": 1,
-  "pipeName": "conversation-standee",
-  "alwaysOnTop": true,
+  "monitorIndex": 0,
+  "topmost": true,
+  "showInTaskbar": false,
+  "debugVisibleBackground": false,
+  "clickThrough": false,
+  "scale": 1.0,
   "window": {
-    "x": 100,
-    "y": 100,
     "width": 512,
-    "height": 768,
-    "scale": 1.0
+    "height": 768
   }
 }

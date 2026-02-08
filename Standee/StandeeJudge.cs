@@ -11,39 +11,64 @@ public sealed class StandeeJudge {
     }
 
     public async Task<string> EvaluateAsync(string userText, string npcName, string recentContext, string narratedState, CancellationToken ct) {
+        var allowed = string.Join(", ", StandeeSprites.Allowed.Select(x => $"\"{x}\""));
         var messages = new List<ChatMessage> {
             new SystemChatMessage($$"""
-You are a sprite selector.
-Return JSON only. No markdown. No explanation.
-Output format must be exactly:
+You are a strict JSON sprite selector.
+Return EXACTLY one JSON object and no extra text.
+Schema:
 {"sprite":"<filename>"}
-The sprite value MUST be one of:
-- 普通.png
-- 笑顔.png
-- 期待、心躍る.png
-- ちょっとした不満.png
-- 悲しい、困る、憐憫.png
-- 恥じらい、照れ、恍惚.png
-- 不穏な笑み、たくらみ.png
-If uncertain, use 普通.png.
+Allowed filenames: [{{allowed}}]
+If uncertain, choose "{{StandeeSprites.Default}}".
 """),
-            new UserChatMessage($"NPC: {npcName}\nUtterance: {userText}\nRecent context:\n{recentContext}\n\nState:\n{narratedState}")
+            new UserChatMessage($"NPC: {npcName}\nUser input: {userText}\nRecent context:\n{recentContext}\n\nNarrated state:\n{narratedState}")
         };
 
         try {
-            var completion = await _chatClient.CompleteChatAsync(messages, new ChatCompletionOptions { Temperature = 0.1f }, ct);
-            var raw = string.Join("", completion.Value.Content.Select(c => c.Text)).Trim();
-            var parsed = JsonSerializer.Deserialize<StandeeJudgeResponse>(raw, new JsonSerializerOptions {
-                PropertyNameCaseInsensitive = true
-            });
-            return StandeeSprites.Normalize(parsed?.Sprite);
+            var completion = await _chatClient.CompleteChatAsync(messages, new ChatCompletionOptions { Temperature = 0.0f }, ct);
+            var raw = string.Concat(completion.Value.Content.Select(c => c.Text)).Trim();
+            return ParseSpriteOrDefault(raw);
         }
         catch {
             return StandeeSprites.Default;
         }
     }
 
-    private sealed class StandeeJudgeResponse {
-        public string? Sprite { get; set; }
+    private static string ParseSpriteOrDefault(string raw) {
+        if (TryParseSprite(raw, out var sprite)) {
+            return sprite;
+        }
+
+        var first = raw.IndexOf('{');
+        var last = raw.LastIndexOf('}');
+        if (first >= 0 && last > first) {
+            var candidate = raw[first..(last + 1)];
+            if (TryParseSprite(candidate, out sprite)) {
+                return sprite;
+            }
+        }
+
+        return StandeeSprites.Default;
+    }
+
+    private static bool TryParseSprite(string jsonText, out string sprite) {
+        sprite = StandeeSprites.Default;
+        try {
+            using var json = JsonDocument.Parse(jsonText);
+            if (json.RootElement.ValueKind != JsonValueKind.Object) {
+                return false;
+            }
+
+            if (!json.RootElement.TryGetProperty("sprite", out var spriteElement) || spriteElement.ValueKind != JsonValueKind.String) {
+                return false;
+            }
+
+            var parsed = spriteElement.GetString();
+            sprite = StandeeSprites.NormalizeOrDefault(parsed);
+            return true;
+        }
+        catch {
+            return false;
+        }
     }
 }
