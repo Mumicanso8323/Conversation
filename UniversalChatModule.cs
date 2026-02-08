@@ -26,6 +26,12 @@ public sealed record ChatModuleOptions(
     int KeepLastTurns = 12
 );
 
+public sealed record ChatRequestContext(
+    string? AdditionalSystemMessage = null,
+    string? ForcedAssistantReply = null
+);
+
+
 public sealed class ChatTurn {
     public string Role { get; set; } = "user";
     public string Text { get; set; } = string.Empty;
@@ -37,6 +43,7 @@ public sealed class ChatSessionState {
     public List<ChatTurn> Turns { get; set; } = new();
     public string SummaryMemory { get; set; } = string.Empty;
     public string? SystemInstructions { get; set; }
+    public string NpcId { get; set; } = "default";
 }
 
 public interface IChatStateStore {
@@ -88,7 +95,8 @@ public sealed class JsonFileChatStateStore : IChatStateStore {
                 PreviousResponseId = state.PreviousResponseId,
                 Turns = state.Turns ?? new List<ChatTurn>(),
                 SummaryMemory = state.SummaryMemory ?? string.Empty,
-                SystemInstructions = state.SystemInstructions
+                SystemInstructions = state.SystemInstructions,
+                NpcId = string.IsNullOrWhiteSpace(state.NpcId) ? "default" : state.NpcId
             };
             return state;
         }
@@ -172,31 +180,31 @@ public sealed class UniversalChatModule {
     public Task ResetAsync(string sessionId, CancellationToken ct = default)
         => _store.DeleteAsync(sessionId, ct);
 
-    public async Task<string> SendAsync(string sessionId, string userText, CancellationToken ct = default) {
+    public async Task<string> SendAsync(string sessionId, string userText, ChatRequestContext? context = null, CancellationToken ct = default) {
         return _opt.Mode switch {
             ChatEngineMode.ResponsesChained or ChatEngineMode.ResponsesManualHistory
-                => await SendWithResponsesAsync(sessionId, userText, ct),
+                => await SendWithResponsesAsync(sessionId, userText, context, ct),
             ChatEngineMode.ChatCompletions
-                => await SendWithChatCompletionsAsync(sessionId, userText, ct),
+                => await SendWithChatCompletionsAsync(sessionId, userText, context, ct),
             _ => throw new NotSupportedException()
         };
     }
 
-    public async IAsyncEnumerable<string> SendStreamingAsync(string sessionId, string userText, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
+    public async IAsyncEnumerable<string> SendStreamingAsync(string sessionId, string userText, ChatRequestContext? context = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
         if (!_opt.Streaming) {
-            yield return await SendAsync(sessionId, userText, ct);
+            yield return await SendAsync(sessionId, userText, context, ct);
             yield break;
         }
 
         switch (_opt.Mode) {
             case ChatEngineMode.ResponsesChained:
             case ChatEngineMode.ResponsesManualHistory:
-                await foreach (var chunk in SendWithResponsesStreamingAsync(sessionId, userText, ct))
+                await foreach (var chunk in SendWithResponsesStreamingAsync(sessionId, userText, context, ct))
                     yield return chunk;
                 yield break;
 
             case ChatEngineMode.ChatCompletions:
-                await foreach (var chunk in SendWithChatCompletionsStreamingAsync(sessionId, userText, ct))
+                await foreach (var chunk in SendWithChatCompletionsStreamingAsync(sessionId, userText, context, ct))
                     yield return chunk;
                 yield break;
 
@@ -205,11 +213,11 @@ public sealed class UniversalChatModule {
         }
     }
 
-    private async Task<string> SendWithResponsesAsync(string sessionId, string userText, CancellationToken ct) {
+    private async Task<string> SendWithResponsesAsync(string sessionId, string userText, ChatRequestContext? context, CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
 
         for (int round = 0; round < _opt.MaxToolCallRounds; round++) {
-            var options = BuildResponseOptions(state, userText);
+            var options = BuildResponseOptions(state, userText, context);
 
             ResponseResult resp = await _responses.CreateResponseAsync(options, ct);
             if (_opt.Mode == ChatEngineMode.ResponsesChained)
@@ -231,9 +239,9 @@ public sealed class UniversalChatModule {
         throw new InvalidOperationException("Tool call rounds exceeded.");
     }
 
-    private async IAsyncEnumerable<string> SendWithResponsesStreamingAsync(string sessionId, string userText, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
+    private async IAsyncEnumerable<string> SendWithResponsesStreamingAsync(string sessionId, string userText, ChatRequestContext? context, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
-        var options = BuildResponseOptions(state, userText);
+        var options = BuildResponseOptions(state, userText, context);
 
         await foreach (StreamingResponseUpdate update in _responses.CreateResponseStreamingAsync(options, ct)) {
             if (update is StreamingResponseOutputTextDeltaUpdate delta)
@@ -241,14 +249,20 @@ public sealed class UniversalChatModule {
         }
     }
 
-    private CreateResponseOptions BuildResponseOptions(ChatSessionState state, string userText) {
+    private CreateResponseOptions BuildResponseOptions(ChatSessionState state, string userText, ChatRequestContext? context) {
         var opt = new CreateResponseOptions {
             StreamingEnabled = false,
         };
 
         var systemInstructions = state.SystemInstructions ?? _opt.SystemInstructions;
-        if (!string.IsNullOrWhiteSpace(systemInstructions))
-            opt.Instructions = systemInstructions;
+        var fullInstructions = string.IsNullOrWhiteSpace(context?.AdditionalSystemMessage)
+            ? systemInstructions
+            : $"{systemInstructions}
+
+{context!.AdditionalSystemMessage}";
+
+        if (!string.IsNullOrWhiteSpace(fullInstructions))
+            opt.Instructions = fullInstructions;
 
         if (_responseTools.Count > 0)
             foreach (var t in _responseTools)
@@ -299,16 +313,24 @@ public sealed class UniversalChatModule {
         return string.Join("\n", parts);
     }
 
-    private async Task<string> SendWithChatCompletionsAsync(string sessionId, string userText, CancellationToken ct) {
+    private async Task<string> SendWithChatCompletionsAsync(string sessionId, string userText, ChatRequestContext? context, CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
         await MaybeSummarizeAsync(state, ct);
+
+        if (!string.IsNullOrWhiteSpace(context?.ForcedAssistantReply)) {
+            var forcedReply = context.ForcedAssistantReply!;
+            state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+            state.Turns.Add(new ChatTurn { Role = "assistant", Text = forcedReply });
+            await _store.SaveAsync(state, ct);
+            return forcedReply;
+        }
 
         var options = new ChatCompletionOptions();
         if (_chatTools.Count > 0)
             foreach (var t in _chatTools)
                 options.Tools.Add(t);
 
-        var messages = BuildMessagesForModel(state, userText);
+        var messages = BuildMessagesForModel(state, userText, context);
 
         bool requiresAction;
         string lastAssistantText = string.Empty;
@@ -349,16 +371,25 @@ public sealed class UniversalChatModule {
         return lastAssistantText;
     }
 
-    private async IAsyncEnumerable<string> SendWithChatCompletionsStreamingAsync(string sessionId, string userText, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
+    private async IAsyncEnumerable<string> SendWithChatCompletionsStreamingAsync(string sessionId, string userText, ChatRequestContext? context, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
         await MaybeSummarizeAsync(state, ct);
+
+        if (!string.IsNullOrWhiteSpace(context?.ForcedAssistantReply)) {
+            var forcedReply = context.ForcedAssistantReply!;
+            state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+            state.Turns.Add(new ChatTurn { Role = "assistant", Text = forcedReply });
+            await _store.SaveAsync(state, ct);
+            yield return forcedReply;
+            yield break;
+        }
 
         var options = new ChatCompletionOptions();
         if (_chatTools.Count > 0)
             foreach (var t in _chatTools)
                 options.Tools.Add(t);
 
-        var messages = BuildMessagesForModel(state, userText);
+        var messages = BuildMessagesForModel(state, userText, context);
         var updates = _chat.CompleteChatStreamingAsync(messages, options, ct);
 
         var sb = new StringBuilder();
@@ -375,12 +406,15 @@ public sealed class UniversalChatModule {
         await _store.SaveAsync(state, ct);
     }
 
-    private List<ChatMessage> BuildMessagesForModel(ChatSessionState state, string userText) {
+    private List<ChatMessage> BuildMessagesForModel(ChatSessionState state, string userText, ChatRequestContext? context) {
         var messages = new List<ChatMessage>();
         var systemInstructions = state.SystemInstructions ?? _opt.SystemInstructions;
 
         if (!string.IsNullOrWhiteSpace(systemInstructions))
             messages.Add(new SystemChatMessage(systemInstructions));
+
+        if (!string.IsNullOrWhiteSpace(context?.AdditionalSystemMessage))
+            messages.Add(new SystemChatMessage(context.AdditionalSystemMessage));
 
         if (!string.IsNullOrWhiteSpace(state.SummaryMemory))
             messages.Add(new SystemChatMessage($"[MEMORY]\n{state.SummaryMemory}"));
