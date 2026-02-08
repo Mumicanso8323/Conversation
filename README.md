@@ -26,7 +26,9 @@
 - `/save`
 - `/load <id>`
 - `/reset`
-- `/persona <default|calm>`
+- `/aff`
+- `/psy`
+- `/persona {id}`
 - `/export`（`exports/{sessionId}-{timestamp}.json` に出力 + コンソール表示）
 - `/import <path>`（省略時は `import.json`）
 - `/help`
