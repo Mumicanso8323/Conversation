@@ -83,8 +83,6 @@ class Program {
         );
 
         var affinityEngine = new AffinityEngine("gpt-5.1", apiKey);
-        var consoleUi = new ConsoleUi();
-        var statusBar = new AffinityStatusBar(consoleUi);
 
         chat.AddChatFunctionTool(
             name: "roll_dice",
@@ -105,14 +103,18 @@ class Program {
         );
 
         string currentSessionId = "stilla";
+
+        // 起動時: 前回までのログのラスト5件を表示
+        await PrintLastTurnsAsync(store, currentSessionId, 5);
+
         var currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
         if (string.IsNullOrWhiteSpace(currentSession.NpcId)) {
             currentSession.NpcId = profiles.DefaultNpcId;
             await store.SaveAsync(currentSession, CancellationToken.None);
         }
 
-        consoleUi.WriteLogLine("Enterで送信。/exit で終了。");
-        PrintHelp(consoleUi);
+        Console.WriteLine("Enterで送信。/exit で終了。");
+        PrintHelp();
 
         while (true) {
             currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
@@ -120,14 +122,15 @@ class Program {
             var npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
             var profile = profiles.GetRequiredProfile(npcId);
             var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
-            consoleUi.WriteLogLine($"[{currentSessionId}/{npcId}] YOU>");
+
+            Console.Write($"\n[{currentSessionId}/{npcId}] YOU> ");
             var input = Console.ReadLine();
             if (input is null) break;
 
             if (TryParseCommand(input, out var cmd, out var arg)) {
                 if (string.Equals(cmd, "exit", StringComparison.OrdinalIgnoreCase)) break;
 
-                var result = await HandleCommandAsync(cmd, arg, consoleUi, store, affinityStore, profileRepository, currentSessionId, affinityEngine);
+                var result = await HandleCommandAsync(cmd, arg, store, affinityStore, profileRepository, currentSessionId, affinityEngine);
                 if (result.NextSessionId is not null) {
                     currentSessionId = result.NextSessionId;
                 }
@@ -137,38 +140,38 @@ class Program {
                 }
 
                 if (!result.Handled) {
-                    consoleUi.WriteLogLine($"Unknown command: /{cmd}");
+                    Console.WriteLine($"Unknown command: /{cmd}");
                 }
 
                 currentSession = await store.LoadAsync(currentSessionId, CancellationToken.None);
                 npcId = string.IsNullOrWhiteSpace(currentSession.NpcId) ? profiles.DefaultNpcId : currentSession.NpcId;
                 profile = profiles.GetRequiredProfile(npcId);
                 affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
-                statusBar.Render(npcId, profile.DisplayName, affinity, true);
                 continue;
             }
 
             var delta = await affinityEngine.EvaluateDeltaAsync(input, profile.DisplayName, CancellationToken.None);
             affinityEngine.ApplyDelta(affinity, profile, delta);
             await affinityStore.SaveAsync(affinity, CancellationToken.None);
-            statusBar.Render(npcId, profile.DisplayName, affinity, true);
 
             var roleplayState = affinityEngine.BuildRoleplayStatePrompt(npcId, profile, affinity);
             var forcedReply = affinityEngine.MaybeGenerateBlockedReply(affinity, profile);
 
-            var response = await chat.SendAsync(
+            Console.Write("AI > ");
+            await foreach (var chunk in chat.SendStreamingAsync(
                 currentSessionId,
                 input,
-                new ChatRequestContext(roleplayState, forcedReply));
-            consoleUi.WriteLogLine($"AI > {response}");
-            statusBar.Render(npcId, profile.DisplayName, affinity, true);
+                new ChatRequestContext(roleplayState, forcedReply))) {
+                foreach (var ch in chunk) Console.Write(ch);
+            }
+
+            Console.WriteLine(string.Empty);
         }
     }
 
     private static async Task<CommandResult> HandleCommandAsync(
         string cmd,
         string arg,
-        ConsoleUi consoleUi,
         IChatStateStore store,
         IAffinityStore affinityStore,
         JsonAffinityProfileRepository profileRepository,
@@ -177,19 +180,19 @@ class Program {
         var profiles = await profileRepository.LoadAsync();
         switch (cmd.ToLowerInvariant()) {
             case "help":
-                PrintHelp(consoleUi);
+                PrintHelp();
                 return new CommandResult(true, null, profiles);
 
             case "save": {
                 var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
                 await store.SaveAsync(state, CancellationToken.None);
-                consoleUi.WriteLogLine($"Saved session: {state.SessionId}");
+                Console.WriteLine($"Saved session: {state.SessionId}");
                 return new CommandResult(true, null, profiles);
             }
 
             case "load": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    consoleUi.WriteLogLine("Usage: /load <sessionId>");
+                    Console.WriteLine("Usage: /load <sessionId>");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -199,13 +202,13 @@ class Program {
                     await store.SaveAsync(loaded, CancellationToken.None);
                 }
 
-                consoleUi.WriteLogLine($"Loaded session: {loaded.SessionId}");
+                Console.WriteLine($"Loaded session: {loaded.SessionId}");
                 return new CommandResult(true, loaded.SessionId, profiles);
             }
 
             case "npc": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    consoleUi.WriteLogLine("Usage: /npc <id>");
+                    Console.WriteLine("Usage: /npc <id>");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -214,7 +217,7 @@ class Program {
                 await store.SaveAsync(state, CancellationToken.None);
                 var profile = profiles.GetRequiredProfile(state.NpcId);
                 await affinityEngine.LoadOrCreateAsync(state.NpcId, profile, affinityStore, CancellationToken.None);
-                consoleUi.WriteLogLine($"NPC switched: {state.NpcId}");
+                Console.WriteLine($"NPC switched: {state.NpcId}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -223,14 +226,14 @@ class Program {
                 var npcId = string.IsNullOrWhiteSpace(state.NpcId) ? profiles.DefaultNpcId : state.NpcId;
                 var profile = profiles.GetRequiredProfile(npcId);
                 var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
-                consoleUi.WriteLogLine(JsonSerializer.Serialize(affinity, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(affinity, new JsonSerializerOptions { WriteIndented = true }));
                 return new CommandResult(true, null, profiles);
             }
 
             case "set": {
                 var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (parts.Length != 2 || !double.TryParse(parts[1], out var value)) {
-                    consoleUi.WriteLogLine("Usage: /set <param> <value>");
+                    Console.WriteLine("Usage: /set <param> <value>");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -239,13 +242,13 @@ class Program {
                 var profile = profiles.GetRequiredProfile(npcId);
                 var affinity = await affinityEngine.LoadOrCreateAsync(npcId, profile, affinityStore, CancellationToken.None);
                 if (!AffinityEngine.TrySet(affinity, parts[0], value)) {
-                    consoleUi.WriteLogLine("Unknown param. like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness");
+                    Console.WriteLine("Unknown param. like/dislike/liked/disliked/love/hate/trust/respect/sexualAwareness");
                     return new CommandResult(true, null, profiles);
                 }
 
                 affinity.UpdatedAt = DateTimeOffset.UtcNow;
                 await affinityStore.SaveAsync(affinity, CancellationToken.None);
-                consoleUi.WriteLogLine($"Set {parts[0]} = {value:F1}");
+                Console.WriteLine($"Set {parts[0]} = {value:F1}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -253,11 +256,11 @@ class Program {
                 var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (parts.Length > 0 && string.Equals(parts[0], "reload", StringComparison.OrdinalIgnoreCase)) {
                     var reloaded = await profileRepository.LoadAsync();
-                    consoleUi.WriteLogLine("Profile reloaded.");
+                    Console.WriteLine("Profile reloaded.");
                     return new CommandResult(true, null, reloaded);
                 }
 
-                consoleUi.WriteLogLine("Usage: /profile reload");
+                Console.WriteLine("Usage: /profile reload");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -267,26 +270,26 @@ class Program {
                 state.SummaryMemory = string.Empty;
                 state.PreviousResponseId = null;
                 await store.SaveAsync(state, CancellationToken.None);
-                consoleUi.WriteLogLine($"Reset session: {currentSessionId}");
+                Console.WriteLine($"Reset session: {currentSessionId}");
                 return new CommandResult(true, null, profiles);
             }
 
             case "persona": {
                 if (string.IsNullOrWhiteSpace(arg)) {
-                    consoleUi.WriteLogLine("Usage: /persona <stilla>");
+                    Console.WriteLine("Usage: /persona <stilla>");
                     return new CommandResult(true, null, profiles);
                 }
 
                 var key = arg.Trim();
                 if (!PersonaPresets.TryGetValue(key, out var persona)) {
-                    consoleUi.WriteLogLine("Unknown persona. Available: stilla");
+                    Console.WriteLine("Unknown persona. Available: stilla");
                     return new CommandResult(true, null, profiles);
                 }
 
                 var state = await store.LoadAsync(currentSessionId, CancellationToken.None);
                 state.SystemInstructions = persona;
                 await store.SaveAsync(state, CancellationToken.None);
-                consoleUi.WriteLogLine($"Persona set: {key}");
+                Console.WriteLine($"Persona set: {key}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -296,23 +299,23 @@ class Program {
                 var path = Path.Combine("exports", $"{currentSessionId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
                 var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
                 await File.WriteAllTextAsync(path, json);
-                consoleUi.WriteLogLine($"Exported: {path}");
-                consoleUi.WriteLogLine(json);
+                Console.WriteLine($"Exported: {path}");
+                Console.WriteLine(json);
                 return new CommandResult(true, null, profiles);
             }
 
             case "import": {
                 var importPath = string.IsNullOrWhiteSpace(arg) ? "import.json" : arg.Trim();
                 if (!File.Exists(importPath)) {
-                    consoleUi.WriteLogLine($"Import file not found: {importPath}");
-                    consoleUi.WriteLogLine("Usage: /import <path-to-json> (default: import.json)");
+                    Console.WriteLine($"Import file not found: {importPath}");
+                    Console.WriteLine("Usage: /import <path-to-json> (default: import.json)");
                     return new CommandResult(true, null, profiles);
                 }
 
                 var json = await File.ReadAllTextAsync(importPath);
                 var imported = JsonSerializer.Deserialize<ChatSessionState>(json);
                 if (imported is null) {
-                    consoleUi.WriteLogLine("Import failed: invalid JSON");
+                    Console.WriteLine("Import failed: invalid JSON");
                     return new CommandResult(true, null, profiles);
                 }
 
@@ -326,7 +329,7 @@ class Program {
                 };
 
                 await store.SaveAsync(imported, CancellationToken.None);
-                consoleUi.WriteLogLine($"Imported to session: {currentSessionId}");
+                Console.WriteLine($"Imported to session: {currentSessionId}");
                 return new CommandResult(true, null, profiles);
             }
 
@@ -334,6 +337,20 @@ class Program {
                 return new CommandResult(false, null, profiles);
         }
     }
+
+private static async Task PrintLastTurnsAsync(IChatStateStore store, string sessionId, int count) {
+    var state = await store.LoadAsync(sessionId, CancellationToken.None);
+    if (state.Turns.Count == 0) return;
+
+    int n = Math.Min(count, state.Turns.Count);
+    Console.WriteLine($"--- Last {n} logs ({sessionId}) ---");
+    for (int i = state.Turns.Count - n; i < state.Turns.Count; i++) {
+        var turn = state.Turns[i];
+        var who = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "AI" : "YOU";
+        Console.WriteLine($"{who} > {turn.Text}");
+    }
+    Console.WriteLine(new string('-', 32));
+}
 
     private static bool TryParseCommand(string input, out string cmd, out string arg) {
         cmd = string.Empty;
@@ -352,40 +369,11 @@ class Program {
         return true;
     }
 
-    private static void PrintHelp(ConsoleUi consoleUi) {
-        consoleUi.WriteLogLine("Commands: /save /load <id> /npc <id> /aff /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
+    private static void PrintHelp() {
+        Console.WriteLine("Commands: /save /load <id> /npc <id> /aff /set <k> <v> /profile reload /reset /persona <preset> /export /import <path> /help /exit");
     }
 
     private sealed record CommandResult(bool Handled, string? NextSessionId, AffinityProfileRoot? ProfileRoot);
 
-    private sealed class AffinityStatusBar {
-        private readonly ConsoleUi _consoleUi;
-
-        public AffinityStatusBar(ConsoleUi consoleUi) {
-            _consoleUi = consoleUi;
-        }
-
-        public void Render(string npcId, string displayName, AffinityState state, bool force = false) {
-            var text = $"NPC:{npcId}({displayName}) Like {state.Like:F1} Dislike {state.Dislike:F1} | Liked {state.Liked:F1} Disliked {state.Disliked:F1} | Love {state.Love:F1} Hate {state.Hate:F1} | Trust {state.Trust:F1} Respect {state.Respect:F1}";
-            _consoleUi.WriteLogLine(text);
-        }
-    }
-
-    private sealed class ConsoleUi {
-        private readonly object _gate = new();
-
-        public void WriteLog(string text) {
-            WriteLogLine(text);
-        }
-
-        public void WriteLogLine(string text) {
-            lock (_gate) {
-                Console.WriteLine(text);
-            }
-        }
-
-        public void WriteLogChunk(string chunk) {
-            WriteLogLine(chunk);
-        }
-    }
+    
 }
