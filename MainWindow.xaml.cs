@@ -257,8 +257,16 @@ public partial class MainWindow : Window {
             return;
         }
 
-        ConfigBanner.Visibility = Visibility.Collapsed;
-        OpenSettingsFromBannerButton.Visibility = Visibility.Collapsed;
+        if (!string.IsNullOrWhiteSpace(_runtime.ConfigurationInfoMessage)) {
+            ConfigBanner.Visibility = Visibility.Visible;
+            ConfigBannerText.Text = _runtime.ConfigurationInfoMessage;
+            OpenSettingsFromBannerButton.Visibility = Visibility.Visible;
+        }
+        else {
+            ConfigBanner.Visibility = Visibility.Collapsed;
+            OpenSettingsFromBannerButton.Visibility = Visibility.Collapsed;
+        }
+
         SendButton.IsEnabled = !_turnInProgress;
         InputBox.IsEnabled = !_turnInProgress;
     }
@@ -390,6 +398,7 @@ public partial class MainWindow : Window {
     private async void OpenSettingsButton_OnClick(object sender, RoutedEventArgs e) {
         try {
             var npcId = await _runtime.GetCurrentNpcIdAsync(CancellationToken.None);
+            var previousMode = _runtime.Settings.Models.MainChatEngineMode;
             var settingsWindow = new SettingsWindow(
                 _runtime,
                 _runtime.Settings,
@@ -447,6 +456,9 @@ public partial class MainWindow : Window {
             }
 
             await RefreshConfigurationStateAsync();
+            if (!string.Equals(previousMode, _runtime.Settings.Models.MainChatEngineMode, StringComparison.OrdinalIgnoreCase)) {
+                _sink.AppendSystemLine("APIモードを切り替えました。会話ログは共通です。");
+            }
             _sink.AppendSystemLine("設定を保存しました。");
         }
         catch (Exception ex) {

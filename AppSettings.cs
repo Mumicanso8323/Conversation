@@ -36,6 +36,8 @@ public sealed class AppSettings {
 
 public sealed class ModelSettings {
     public string MainChat { get; set; } = "gpt-5.2";
+    public string MainChatEngineMode { get; set; } = "ChatCompletions";
+    public string SummaryModel { get; set; } = "gpt-5.2";
     public string StandeeJudge { get; set; } = "gpt-5.1";
 }
 
