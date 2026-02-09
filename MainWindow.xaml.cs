@@ -68,6 +68,8 @@ public partial class MainWindow : Window {
             ApplyUiPreferencesToVisuals();
             ApplyBgmPreferences();
 
+            await RefreshConfigurationStateAsync();
+
             await _runtime.EnsureInitializedAsync(CancellationToken.None);
             await LoadSelectorsAsync();
 
@@ -90,7 +92,7 @@ public partial class MainWindow : Window {
                 _sink.AppendSystemLine(warning);
             }
 
-            await RefreshConfigurationStateAsync();
+            // await RefreshConfigurationStateAsync();
 
             TranscriptList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(TranscriptList_OnScrollChanged));
         }

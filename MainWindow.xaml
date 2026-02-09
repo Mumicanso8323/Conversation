@@ -57,10 +57,10 @@
                 <ComboBox x:Name="NpcCombo" Grid.Column="4" Width="180" SelectionChanged="NpcCombo_OnSelectionChanged" />
             </Grid>
 
-            <Grid Grid.Row="2">
+            <Grid Grid.Row="2" Margin="0,0,357,0">
                 <Image x:Name="ChatBackgroundImage" Stretch="UniformToFill" Opacity="0.42" IsHitTestVisible="False"/>
                 <Border Background="#B3151720" IsHitTestVisible="False"/>
-                <ListBox x:Name="TranscriptList" ItemsSource="{Binding Transcript}" Background="Transparent" BorderThickness="0" Margin="0,0,411,0">
+                <ListBox x:Name="TranscriptList" ItemsSource="{Binding Transcript}" Background="Transparent" BorderThickness="0">
                     <ListBox.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:ChatMessage}">
                             <Grid Margin="0,0,0,8">
@@ -85,7 +85,7 @@
                 </ListBox>
             </Grid>
 
-            <Grid Grid.Row="3" Margin="0,8,0,0">
+            <Grid Grid.Row="3" Margin="0,8,357,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -106,7 +106,7 @@
                 Background="#FF1E1E24"
                 CornerRadius="8"
                 Padding="8"
-                Visibility="{Binding Standee.StandeeVisible, Converter={StaticResource BoolToVisibilityConverter}}" Margin="0,30,0,0">
+                Visibility="{Binding Standee.StandeeVisible, Converter={StaticResource BoolToVisibilityConverter}}" Margin="57,30,0,0">
             <Grid>
                 <Image Stretch="Uniform" Source="{Binding Standee.CurrentBitmapImage}" />
             </Grid>
