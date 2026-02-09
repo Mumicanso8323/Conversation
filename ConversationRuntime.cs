@@ -29,6 +29,9 @@ public sealed class ConversationRuntime {
     private string? _activeApiKey;
     private string? _activeMainModel;
     private string? _activeStandeeModel;
+    private string? _activeSummaryModel;
+    private ChatEngineMode? _activeMainMode;
+    private string _configurationInfoMessage = string.Empty;
 
     public string CurrentSessionId { get; private set; } = "stilla";
     public bool LastCommandRequestedExit { get; private set; }
@@ -37,6 +40,7 @@ public sealed class ConversationRuntime {
 
     public bool IsConfigured { get; private set; }
     public string ConfigurationErrorMessage { get; private set; } = string.Empty;
+    public string ConfigurationInfoMessage => _configurationInfoMessage;
     public AppSettings Settings { get; }
 
     public ConversationRuntime(IStandeeController? standeeController = null) {
@@ -76,16 +80,24 @@ public sealed class ConversationRuntime {
 
             var mainModel = string.IsNullOrWhiteSpace(Settings.Models.MainChat) ? "gpt-5.2" : Settings.Models.MainChat;
             var standeeModel = string.IsNullOrWhiteSpace(Settings.Models.StandeeJudge) ? "gpt-5.1" : Settings.Models.StandeeJudge;
+            var summaryModel = string.IsNullOrWhiteSpace(Settings.Models.SummaryModel) ? "gpt-5.2" : Settings.Models.SummaryModel;
+            var selectedMode = ParseChatEngineMode(Settings.Models.MainChatEngineMode);
+            var requiredMode = GetRequiredEngineMode(mainModel);
+            var effectiveMode = requiredMode ?? selectedMode;
+            _configurationInfoMessage = requiredMode is not null && selectedMode != requiredMode.Value
+                ? "このモデルは Chat API 非対応のため Responses API を使用します。"
+                : string.Empty;
             _prompts = await _promptRepository.LoadAsync();
 
-            if (_chat is null || _psycheJudge is null || _standeeJudge is null || _sceneJudge is null || _activeApiKey != apiKey || _activeMainModel != mainModel || _activeStandeeModel != standeeModel) {
+            if (_chat is null || _psycheJudge is null || _standeeJudge is null || _sceneJudge is null || _activeApiKey != apiKey || _activeMainModel != mainModel || _activeStandeeModel != standeeModel || _activeSummaryModel != summaryModel || _activeMainMode != effectiveMode) {
                 _chat = new UniversalChatModule(
                     new ChatModuleOptions(
                         Model: mainModel,
                         ApiKey: apiKey,
                         SystemInstructions: _prompts.GetPersonaSystemInstructions("stilla"),
-                        Mode: ChatEngineMode.ChatCompletions,
+                        Mode: effectiveMode,
                         Streaming: true,
+                        SummaryModel: summaryModel,
                         PersonaSystemResolver: personaId => _prompts.GetPersonaSystemInstructions(personaId)
                     ),
                     _store
@@ -115,6 +127,8 @@ public sealed class ConversationRuntime {
                 _activeApiKey = apiKey;
                 _activeMainModel = mainModel;
                 _activeStandeeModel = standeeModel;
+                _activeSummaryModel = summaryModel;
+                _activeMainMode = effectiveMode;
             }
 
             IsConfigured = true;
@@ -126,8 +140,27 @@ public sealed class ConversationRuntime {
             Log.Error(ex, "TryInitializeAsync");
             IsConfigured = false;
             ConfigurationErrorMessage = $"初期化に失敗しました: {ex.Message}";
+            _configurationInfoMessage = string.Empty;
             return false;
         }
+    }
+
+    private static ChatEngineMode? GetRequiredEngineMode(string modelName) {
+        return modelName.Contains("-pro", StringComparison.OrdinalIgnoreCase)
+            ? ChatEngineMode.ResponsesManualHistory
+            : null;
+    }
+
+    private static ChatEngineMode ParseChatEngineMode(string? configuredMode) {
+        if (string.Equals(configuredMode, "ResponsesManualHistory", StringComparison.OrdinalIgnoreCase)) {
+            return ChatEngineMode.ResponsesManualHistory;
+        }
+
+        if (string.Equals(configuredMode, "ResponsesChained", StringComparison.OrdinalIgnoreCase)) {
+            return ChatEngineMode.ResponsesChained;
+        }
+
+        return ChatEngineMode.ChatCompletions;
     }
 
     public async Task EnsureInitializedAsync(CancellationToken ct) {

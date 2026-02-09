@@ -39,6 +39,9 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
@@ -49,8 +52,22 @@
                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="メインモデル" />
                     <TextBox x:Name="MainModelTextBox" Grid.Row="0" Grid.Column="1" />
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="立ち絵モデル" />
-                    <TextBox x:Name="StandeeModelTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,0" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="APIモード" />
+                    <ComboBox x:Name="MainApiModeComboBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,0" HorizontalAlignment="Left" Width="320">
+                        <ComboBoxItem Content="Chat API（/v1/chat/completions）" />
+                        <ComboBoxItem Content="Responses API（/v1/responses）" />
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" Foreground="#FF666666" Text="gpt-5.2-pro は Responses API が必要です" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="立ち絵モデル" />
+                    <TextBox x:Name="StandeeModelTextBox" Grid.Row="3" Grid.Column="1" Margin="0,10,0,0" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,0" Text="要約モデル" />
+                    <StackPanel Grid.Row="4" Grid.Column="1" Margin="0,10,0,0">
+                        <TextBox x:Name="SummaryModelTextBox" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#FF666666" Text="（例: gpt-5.2）" />
+                    </StackPanel>
                 </Grid>
             </TabItem>
 

@@ -26,6 +26,7 @@ public sealed record ChatModuleOptions(
     int MaxToolCallRounds = 8,
     int SummaryTriggerTurns = 24,
     int KeepLastTurns = 12,
+    string SummaryModel = "gpt-5.2",
     Func<string?, string?>? PersonaSystemResolver = null
 );
 
@@ -45,6 +46,7 @@ public sealed class ChatSessionState {
     public string? PreviousResponseId { get; set; }
     public List<ChatTurn> Turns { get; set; } = new();
     public string SummaryMemory { get; set; } = string.Empty;
+    public int SummarizedTurnCount { get; set; }
     public string? SystemInstructions { get; set; }
     public string? PersonaId { get; set; }
     public string NpcId { get; set; } = "default";
@@ -99,6 +101,7 @@ public sealed class JsonFileChatStateStore : IChatStateStore {
                 PreviousResponseId = state.PreviousResponseId,
                 Turns = state.Turns ?? new List<ChatTurn>(),
                 SummaryMemory = state.SummaryMemory ?? string.Empty,
+                SummarizedTurnCount = Math.Max(0, state.SummarizedTurnCount),
                 SystemInstructions = state.SystemInstructions,
                 PersonaId = state.PersonaId,
                 NpcId = string.IsNullOrWhiteSpace(state.NpcId) ? "default" : state.NpcId
@@ -131,6 +134,7 @@ public sealed class UniversalChatModule {
 
     private readonly ResponsesClient _responses;
     private readonly ChatClient _chat;
+    private readonly ChatClient _summaryChat;
 
     private readonly List<ResponseTool> _responseTools = new();
     private readonly Dictionary<string, Func<JsonElement, CancellationToken, Task<string>>> _responseToolHandlers = new();
@@ -144,6 +148,7 @@ public sealed class UniversalChatModule {
 
         _responses = new ResponsesClient(opt.Model, opt.ApiKey);
         _chat = new ChatClient(opt.Model, opt.ApiKey);
+        _summaryChat = new ChatClient(opt.SummaryModel, opt.ApiKey);
     }
 
     public UniversalChatModule AddResponseFunctionTool(
@@ -204,6 +209,12 @@ public sealed class UniversalChatModule {
         switch (_opt.Mode) {
             case ChatEngineMode.ResponsesChained:
             case ChatEngineMode.ResponsesManualHistory:
+                if (_responseTools.Count > 0) {
+                    yield return "ツール使用時はストリーミングを無効化しました。\n\n";
+                    yield return await SendWithResponsesAsync(sessionId, userText, context, ct);
+                    yield break;
+                }
+
                 await foreach (var chunk in SendWithResponsesStreamingAsync(sessionId, userText, context, ct))
                     yield return chunk;
                 yield break;
@@ -220,9 +231,20 @@ public sealed class UniversalChatModule {
 
     private async Task<string> SendWithResponsesAsync(string sessionId, string userText, ChatRequestContext? context, CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
+        await MaybeSummarizeAsync(state, ct);
 
+        if (!string.IsNullOrWhiteSpace(context?.ForcedAssistantReply)) {
+            var forcedReply = context.ForcedAssistantReply!;
+            state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+            state.Turns.Add(new ChatTurn { Role = "assistant", Text = forcedReply });
+            await _store.SaveAsync(state, ct);
+            return forcedReply;
+        }
+
+        var requestText = userText;
+        IReadOnlyList<ResponseItem>? pendingToolOutputs = null;
         for (int round = 0; round < _opt.MaxToolCallRounds; round++) {
-            var options = BuildResponseOptions(state, userText, context);
+            var options = BuildResponseOptions(state, requestText, context, streamingEnabled: false, pendingToolOutputs);
 
             ResponseResult resp = await _responses.CreateResponseAsync(options, ct);
             if (_opt.Mode == ChatEngineMode.ResponsesChained)
@@ -230,9 +252,12 @@ public sealed class UniversalChatModule {
 
             var toolOutputs = await ResolveResponseFunctionCallsAsync(resp, ct);
             if (toolOutputs.Count > 0) {
-                userText = "（上記ツール結果を踏まえて続けて）";
+                pendingToolOutputs = toolOutputs;
+                requestText = "（上記ツール結果を踏まえて続けて）";
                 continue;
             }
+
+            pendingToolOutputs = null;
 
             string text = ExtractResponseText(resp);
             state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
@@ -246,38 +271,58 @@ public sealed class UniversalChatModule {
 
     private async IAsyncEnumerable<string> SendWithResponsesStreamingAsync(string sessionId, string userText, ChatRequestContext? context, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         var state = await _store.LoadAsync(sessionId, ct);
-        var options = BuildResponseOptions(state, userText, context);
+        await MaybeSummarizeAsync(state, ct);
+
+        if (!string.IsNullOrWhiteSpace(context?.ForcedAssistantReply)) {
+            var forcedReply = context.ForcedAssistantReply!;
+            state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+            state.Turns.Add(new ChatTurn { Role = "assistant", Text = forcedReply });
+            await _store.SaveAsync(state, ct);
+            yield return forcedReply;
+            yield break;
+        }
+
+        var options = BuildResponseOptions(state, userText, context, streamingEnabled: true);
+        var assistantText = new StringBuilder();
 
         await foreach (StreamingResponseUpdate update in _responses.CreateResponseStreamingAsync(options, ct)) {
-            if (update is StreamingResponseOutputTextDeltaUpdate delta)
+            if (update is StreamingResponseOutputTextDeltaUpdate delta) {
+                assistantText.Append(delta.Delta);
                 yield return delta.Delta;
+            }
         }
+
+        state.Turns.Add(new ChatTurn { Role = "user", Text = userText });
+        state.Turns.Add(new ChatTurn { Role = "assistant", Text = assistantText.ToString() });
+        await _store.SaveAsync(state, ct);
     }
 
-    private CreateResponseOptions BuildResponseOptions(ChatSessionState state, string userText, ChatRequestContext? context) {
+    private CreateResponseOptions BuildResponseOptions(ChatSessionState state, string userText, ChatRequestContext? context, bool streamingEnabled, IReadOnlyList<ResponseItem>? toolOutputs = null) {
         var opt = new CreateResponseOptions {
-            StreamingEnabled = false,
+            StreamingEnabled = streamingEnabled,
         };
 
-        var systemInstructions = ResolveSystemInstructions(state);
-        var fullInstructions = string.IsNullOrWhiteSpace(context?.AdditionalSystemMessage)
-            ? systemInstructions
-            : $"{systemInstructions}\n{context!.AdditionalSystemMessage}";
-
-        if (!string.IsNullOrWhiteSpace(fullInstructions))
-            opt.Instructions = fullInstructions;
+        var instructions = BuildInstructionBlocks(state, context);
+        if (!string.IsNullOrWhiteSpace(instructions))
+            opt.Instructions = instructions;
 
         if (_responseTools.Count > 0)
             foreach (var t in _responseTools)
                 opt.Tools.Add(t);
 
         if (_opt.Mode == ChatEngineMode.ResponsesManualHistory) {
-            foreach (var turn in state.Turns) {
+            int keepLastTurns = Math.Max(1, _opt.KeepLastTurns);
+            foreach (var turn in state.Turns.Skip(Math.Max(0, state.Turns.Count - keepLastTurns))) {
                 if (turn.Role == "assistant") opt.InputItems.Add(ResponseItem.CreateAssistantMessageItem(turn.Text));
                 else opt.InputItems.Add(ResponseItem.CreateUserMessageItem(turn.Text));
             }
 
             opt.InputItems.Add(ResponseItem.CreateUserMessageItem(userText));
+            if (toolOutputs is not null) {
+                foreach (var output in toolOutputs) {
+                    opt.InputItems.Add(output);
+                }
+            }
             return opt;
         }
 
@@ -285,6 +330,11 @@ public sealed class UniversalChatModule {
             opt.PreviousResponseId = state.PreviousResponseId;
 
         opt.InputItems.Add(ResponseItem.CreateUserMessageItem(userText));
+        if (toolOutputs is not null) {
+            foreach (var output in toolOutputs) {
+                opt.InputItems.Add(output);
+            }
+        }
         return opt;
     }
 
@@ -411,16 +461,10 @@ public sealed class UniversalChatModule {
 
     private List<ChatMessage> BuildMessagesForModel(ChatSessionState state, string userText, ChatRequestContext? context) {
         var messages = new List<ChatMessage>();
-        var systemInstructions = ResolveSystemInstructions(state);
+        var instructions = BuildInstructionBlocks(state, context);
 
-        if (!string.IsNullOrWhiteSpace(systemInstructions))
-            messages.Add(new SystemChatMessage(systemInstructions));
-
-        if (!string.IsNullOrWhiteSpace(context?.AdditionalSystemMessage))
-            messages.Add(new SystemChatMessage(context.AdditionalSystemMessage));
-
-        if (!string.IsNullOrWhiteSpace(state.SummaryMemory))
-            messages.Add(new SystemChatMessage($"[MEMORY]\n{state.SummaryMemory}"));
+        if (!string.IsNullOrWhiteSpace(instructions))
+            messages.Add(new SystemChatMessage(instructions));
 
         int keepLastTurns = Math.Max(1, _opt.KeepLastTurns);
         foreach (var turn in state.Turns.Skip(Math.Max(0, state.Turns.Count - keepLastTurns)))
@@ -430,6 +474,23 @@ public sealed class UniversalChatModule {
         return messages;
     }
 
+    private string BuildInstructionBlocks(ChatSessionState state, ChatRequestContext? context) {
+        var blocks = new List<string>();
+        var systemInstructions = ResolveSystemInstructions(state);
+        if (!string.IsNullOrWhiteSpace(systemInstructions)) {
+            blocks.Add(systemInstructions);
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.SummaryMemory)) {
+            blocks.Add($"[MEMORY]\n{state.SummaryMemory}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(context?.AdditionalSystemMessage)) {
+            blocks.Add(context.AdditionalSystemMessage);
+        }
+
+        return string.Join("\n\n", blocks);
+    }
 
     private string? ResolveSystemInstructions(ChatSessionState state) {
         var fromPersona = _opt.PersonaSystemResolver?.Invoke(state.PersonaId);
@@ -444,11 +505,13 @@ public sealed class UniversalChatModule {
         int triggerTurns = Math.Max(1, _opt.SummaryTriggerTurns);
         int keepLastTurns = Math.Max(1, _opt.KeepLastTurns);
 
-        if (state.Turns.Count <= triggerTurns || state.Turns.Count <= keepLastTurns)
+        int eligibleTurns = Math.Max(0, state.Turns.Count - keepLastTurns);
+        int summarizedTurns = Math.Clamp(state.SummarizedTurnCount, 0, eligibleTurns);
+        int turnsToSummarize = eligibleTurns - summarizedTurns;
+        if (turnsToSummarize < triggerTurns)
             return;
 
-        int cutCount = state.Turns.Count - keepLastTurns;
-        var cut = state.Turns.Take(cutCount).ToList();
+        var cut = state.Turns.Skip(summarizedTurns).Take(turnsToSummarize).ToList();
         var cutText = string.Join("\n", cut.Select(t => $"{t.Role}: {t.Text}"));
 
         var summarizeMessages = new List<ChatMessage> {
@@ -456,7 +519,7 @@ public sealed class UniversalChatModule {
             new UserChatMessage(cutText)
         };
 
-        ChatCompletion summaryCompletion = await _chat.CompleteChatAsync(summarizeMessages, new ChatCompletionOptions(), ct);
+        ChatCompletion summaryCompletion = await _summaryChat.CompleteChatAsync(summarizeMessages, new ChatCompletionOptions(), ct);
         string summary = string.Join("\n", summaryCompletion.Content.Select(c => c.Text)).Trim();
 
         if (!string.IsNullOrWhiteSpace(summary)) {
@@ -465,7 +528,7 @@ public sealed class UniversalChatModule {
                 : $"{state.SummaryMemory}\n{summary}";
         }
 
-        state.Turns.RemoveRange(0, cutCount);
+        state.SummarizedTurnCount = eligibleTurns;
         await _store.SaveAsync(state, ct);
     }
 

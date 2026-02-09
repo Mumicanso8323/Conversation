@@ -60,6 +60,8 @@ public partial class SettingsWindow : Window {
 
         MainModelTextBox.Text = settings.Models.MainChat;
         StandeeModelTextBox.Text = settings.Models.StandeeJudge;
+        SummaryModelTextBox.Text = string.IsNullOrWhiteSpace(settings.Models.SummaryModel) ? "gpt-5.2" : settings.Models.SummaryModel;
+        MainApiModeComboBox.SelectedIndex = string.Equals(settings.Models.MainChatEngineMode, "ChatCompletions", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
 
         StandeeEnabledCheckBox.IsChecked = settings.Standee.Enabled;
         StandeeWidthTextBox.Text = ((int)Math.Max(220, prefs.StandeePanelWidth)).ToString();
@@ -114,8 +116,19 @@ public partial class SettingsWindow : Window {
 
     private void SaveButton_OnClick(object sender, RoutedEventArgs e) {
         _settings.UserDisplayName = string.IsNullOrWhiteSpace(UserDisplayNameTextBox.Text) ? "あなた" : UserDisplayNameTextBox.Text.Trim();
-        _settings.Models.MainChat = string.IsNullOrWhiteSpace(MainModelTextBox.Text) ? "gpt-5.2" : MainModelTextBox.Text.Trim();
+        var selectedMainModel = string.IsNullOrWhiteSpace(MainModelTextBox.Text) ? "gpt-5.2" : MainModelTextBox.Text.Trim();
+        var selectedMode = GetSelectedMainEngineMode();
+        var requiredMode = GetRequiredEngineMode(selectedMainModel);
+        if (requiredMode is not null && !string.Equals(selectedMode, requiredMode, StringComparison.OrdinalIgnoreCase)) {
+            MainApiModeComboBox.SelectedIndex = 1;
+            selectedMode = requiredMode;
+            MessageBox.Show(this, "選択したモデルは Chat API 非対応です。Responses API に切り替えました。", "設定", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        _settings.Models.MainChat = selectedMainModel;
+        _settings.Models.MainChatEngineMode = selectedMode;
         _settings.Models.StandeeJudge = string.IsNullOrWhiteSpace(StandeeModelTextBox.Text) ? "gpt-5.1" : StandeeModelTextBox.Text.Trim();
+        _settings.Models.SummaryModel = string.IsNullOrWhiteSpace(SummaryModelTextBox.Text) ? "gpt-5.2" : SummaryModelTextBox.Text.Trim();
         _settings.Standee.Enabled = StandeeEnabledCheckBox.IsChecked == true;
 
         _prefs.LastTurnsToLoad = int.TryParse(DefaultTurnsTextBox.Text, out var turns) ? Math.Clamp(turns, 1, 200) : 20;
@@ -132,6 +145,18 @@ public partial class SettingsWindow : Window {
 
         DialogResult = true;
         Close();
+    }
+
+    private string GetSelectedMainEngineMode() {
+        return MainApiModeComboBox.SelectedIndex <= 0
+            ? "ChatCompletions"
+            : "ResponsesManualHistory";
+    }
+
+    private static string? GetRequiredEngineMode(string modelName) {
+        return modelName.Contains("-pro", StringComparison.OrdinalIgnoreCase)
+            ? "ResponsesManualHistory"
+            : null;
     }
 
     private void CancelButton_OnClick(object sender, RoutedEventArgs e) {
